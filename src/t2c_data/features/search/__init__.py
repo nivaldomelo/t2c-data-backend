@@ -1,0 +1,48 @@
+from t2c_data.features.search.global_search import SearchFilters, normalize_search_text, search_global, search_popular, search_recent, search_suggestions
+from t2c_data.features.search.analytics import (
+    delete_favorite_asset,
+    get_critical_results,
+    get_favorite_results,
+    get_popular_results,
+    get_recent_asset_results,
+    get_recent_searches,
+    is_favorite_asset,
+    track_recent_query,
+    track_result_click,
+    upsert_favorite_asset,
+)
+from t2c_data.features.search.alias_management import (
+    SearchAliasFilters,
+    create_alias,
+    delete_alias,
+    get_alias_detail,
+    get_alias_filters,
+    list_aliases,
+    update_alias,
+)
+
+__all__ = [
+    "create_alias",
+    "delete_alias",
+    "delete_favorite_asset",
+    "get_alias_detail",
+    "get_alias_filters",
+    "get_critical_results",
+    "get_favorite_results",
+    "get_popular_results",
+    "get_recent_asset_results",
+    "get_recent_searches",
+    "is_favorite_asset",
+    "list_aliases",
+    "SearchAliasFilters",
+    "SearchFilters",
+    "normalize_search_text",
+    "search_global",
+    "search_suggestions",
+    "search_recent",
+    "search_popular",
+    "track_recent_query",
+    "track_result_click",
+    "upsert_favorite_asset",
+    "update_alias",
+]

@@ -1,0 +1,165 @@
+# Turn2C backend (Python/FastAPI) CI/CD — segue infra-standards.md (ladder if-elif, ECR {env}-{sha},
+# Helm in-tree, secret-values.yaml em runtime).
+# NOTE (DevOps, dono deste arquivo): reconciliar com o shape canônico de `new-app-template`/`t2c-drift-guard`.
+name: T2C Data Backend CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop, apice]   # main→prd, develop→dev, apice→apc
+  workflow_dispatch:
+
+env:
+  BRANCH: ${{ github.ref_name }}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  init:
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.set_env.outputs.environment }}
+      cluster_name: ${{ steps.set_env.outputs.cluster_name }}
+      dns_domain: ${{ steps.set_env.outputs.dns_domain }}
+      aws_account_id: ${{ steps.set_env.outputs.aws_account_id }}
+      app_name: ${{ steps.app.outputs.app_name }}
+      lang_version: ${{ steps.app.outputs.lang_version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: app
+        name: Read infra.yaml
+        run: |
+          APP_NAME=$(grep -E '^\s+name:' infra.yaml | head -1 | awk '{print $2}')
+          LANG_VERSION=$(grep -E '^\s+version:' infra.yaml | head -1 | awk '{print $2}' | tr -d '"')
+          echo "app_name=${APP_NAME}" >> "$GITHUB_OUTPUT"
+          echo "lang_version=${LANG_VERSION}" >> "$GITHUB_OUTPUT"
+      - id: set_env
+        name: Map BRANCH -> environment + platform vars
+        run: |
+          if [ "$BRANCH" = "main" ]; then
+            echo "environment=prd" >> "$GITHUB_OUTPUT"
+            echo "cluster_name=${{ vars.PRD_CLUSTER_NAME }}" >> "$GITHUB_OUTPUT"
+            echo "dns_domain=${{ vars.PRD_DNS_DOMAIN }}" >> "$GITHUB_OUTPUT"
+            echo "aws_account_id=${{ vars.PRD_AWS_ACCOUNT_ID }}" >> "$GITHUB_OUTPUT"
+          elif [ "$BRANCH" = "develop" ]; then
+            echo "environment=dev" >> "$GITHUB_OUTPUT"
+            echo "cluster_name=${{ vars.DEV_CLUSTER_NAME }}" >> "$GITHUB_OUTPUT"
+            echo "dns_domain=${{ vars.DEV_DNS_DOMAIN }}" >> "$GITHUB_OUTPUT"
+            echo "aws_account_id=${{ vars.DEV_AWS_ACCOUNT_ID }}" >> "$GITHUB_OUTPUT"
+          elif [ "$BRANCH" = "apice" ]; then
+            echo "environment=apc" >> "$GITHUB_OUTPUT"
+            echo "cluster_name=${{ vars.APC_CLUSTER_NAME }}" >> "$GITHUB_OUTPUT"
+            echo "dns_domain=${{ vars.APC_DNS_DOMAIN }}" >> "$GITHUB_OUTPUT"
+            echo "aws_account_id=${{ vars.APC_AWS_ACCOUNT_ID }}" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: init
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ needs.init.outputs.lang_version }}
+      - name: Install + lint + test
+        run: |
+          pip install --upgrade pip
+          pip install -e ".[dev]"
+          ruff check src tests || ruff check app tests
+          mypy || true
+          pytest
+
+  docker:
+    needs: [init, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: aws
+        name: set-aws-creds (ladder)
+        run: |
+          if [ "$BRANCH" = "main" ]; then
+            echo "AWS_ACCESS_KEY_ID=${{ secrets.PRD_AWS_ACCESS_KEY_JENKINS }}" >> "$GITHUB_ENV"
+            echo "AWS_SECRET_ACCESS_KEY=${{ secrets.PRD_AWS_SECRET_ACCESS_KEY }}" >> "$GITHUB_ENV"
+          elif [ "$BRANCH" = "develop" ]; then
+            echo "AWS_ACCESS_KEY_ID=${{ secrets.DEV_AWS_ACCESS_KEY_JENKINS }}" >> "$GITHUB_ENV"
+            echo "AWS_SECRET_ACCESS_KEY=${{ secrets.DEV_AWS_SECRET_ACCESS_KEY }}" >> "$GITHUB_ENV"
+          elif [ "$BRANCH" = "apice" ]; then
+            echo "AWS_ACCESS_KEY_ID=${{ secrets.APC_AWS_ACCESS_KEY_JENKINS }}" >> "$GITHUB_ENV"
+            echo "AWS_SECRET_ACCESS_KEY=${{ secrets.APC_AWS_SECRET_ACCESS_KEY }}" >> "$GITHUB_ENV"
+          fi
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+      - name: Ensure ECR repo + build & push {env}-{sha}
+        env:
+          ENVIRONMENT: ${{ needs.init.outputs.environment }}
+          APP_NAME: ${{ needs.init.outputs.app_name }}
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          aws ecr describe-repositories --repository-names "$APP_NAME" \
+            || aws ecr create-repository --repository-name "$APP_NAME" --image-tag-mutability IMMUTABLE
+          IMAGE="$REGISTRY/$APP_NAME:${ENVIRONMENT}-${GITHUB_SHA::7}"
+          docker build -f Dockerfile -t "$IMAGE" .
+          docker push "$IMAGE"
+
+  deploy:
+    needs: [init, docker]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: aws
+        name: set-aws-creds (ladder)
+        run: |
+          if [ "$BRANCH" = "main" ]; then
+            echo "AWS_ACCESS_KEY_ID=${{ secrets.PRD_AWS_ACCESS_KEY_JENKINS }}" >> "$GITHUB_ENV"
+            echo "AWS_SECRET_ACCESS_KEY=${{ secrets.PRD_AWS_SECRET_ACCESS_KEY }}" >> "$GITHUB_ENV"
+          elif [ "$BRANCH" = "develop" ]; then
+            echo "AWS_ACCESS_KEY_ID=${{ secrets.DEV_AWS_ACCESS_KEY_JENKINS }}" >> "$GITHUB_ENV"
+            echo "AWS_SECRET_ACCESS_KEY=${{ secrets.DEV_AWS_SECRET_ACCESS_KEY }}" >> "$GITHUB_ENV"
+          elif [ "$BRANCH" = "apice" ]; then
+            echo "AWS_ACCESS_KEY_ID=${{ secrets.APC_AWS_ACCESS_KEY_JENKINS }}" >> "$GITHUB_ENV"
+            echo "AWS_SECRET_ACCESS_KEY=${{ secrets.APC_AWS_SECRET_ACCESS_KEY }}" >> "$GITHUB_ENV"
+          fi
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: kubeconfig
+        run: aws eks update-kubeconfig --name "${{ needs.init.outputs.cluster_name }}" --region "${{ vars.AWS_REGION }}"
+      - name: Generate secret-values.yaml (runtime only)
+        env:
+          ENVIRONMENT: ${{ needs.init.outputs.environment }}
+        run: |
+          cat > secret-values.yaml <<EOF
+          secrets:
+            DATABASE_URL: "${{ secrets.DATABASE_URL }}"
+            JWT_SECRET_KEY: "${{ secrets.JWT_SECRET_KEY }}"
+            DATASOURCE_SECRET_KEY: "${{ secrets.DATASOURCE_SECRET_KEY }}"
+            AWS_ACCESS_KEY_ID: "${{ env.AWS_ACCESS_KEY_ID }}"
+            AWS_SECRET_ACCESS_KEY: "${{ env.AWS_SECRET_ACCESS_KEY }}"
+            AWS_REGION: "${{ vars.AWS_REGION }}"
+          EOF
+      - name: helm upgrade --install
+        env:
+          ENVIRONMENT: ${{ needs.init.outputs.environment }}
+          APP_NAME: ${{ needs.init.outputs.app_name }}
+          DNS_DOMAIN: ${{ needs.init.outputs.dns_domain }}
+          AWS_ACCOUNT_ID: ${{ needs.init.outputs.aws_account_id }}
+        run: |
+          REGISTRY="$AWS_ACCOUNT_ID.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com"
+          helm upgrade --install "$APP_NAME" .helm \
+            -n "${ENVIRONMENT}-app" --create-namespace \
+            -f secret-values.yaml \
+            --set appName="$APP_NAME" \
+            --set domain="$DNS_DOMAIN" \
+            --set ingressEnvironment="$ENVIRONMENT" \
+            --set image.repository="$REGISTRY/$APP_NAME" \
+            --set image.tag="${ENVIRONMENT}-${GITHUB_SHA::7}" \
+            --set config.ENV="$ENVIRONMENT" \
+            --wait

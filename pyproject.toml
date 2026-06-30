@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "andromeda-backend"
+version = "0.1.0"
+description = "Andromeda metadata catalog backend"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.111.0",
+  "uvicorn[standard]>=0.30.0",
+  "httpx>=0.27.0",
+  "sqlalchemy>=2.0.30",
+  "alembic>=1.13.2",
+  "psycopg[binary]>=3.2.0",
+  "pymysql>=1.1.1",
+  "pymongo>=4.16.0",
+  "pydantic-settings>=2.3.4",
+  "PyJWT>=2.8.0",
+  "cryptography>=42",
+  "passlib[bcrypt]>=1.7.4",
+  "argon2-cffi>=23.1.0",
+  "email-validator>=2.2.0",
+  "openpyxl>=3.1.5",
+  "pyarrow>=18.0.0",
+  "python-multipart>=0.0.20",
+  "defusedxml>=0.7.1",
+  "prometheus-fastapi-instrumentator>=7.0.0",
+  "python-json-logger>=2.0.7",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.2.0",
+  "ruff>=0.5.0",
+  "mypy>=1.10.0",
+]
+connectors = [
+  "pyodbc>=5.1.0",
+  "oracledb>=2.2.1",
+  "snowflake-connector-python>=3.11.0",
+  "google-cloud-bigquery>=3.25.0",
+  "redshift-connector>=2.1.3",
+  "databricks-sql-connector>=3.2.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["t2c_data*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+
+[dependency-groups]
+dev = [
+    "pip-audit>=2.10.0",
+]

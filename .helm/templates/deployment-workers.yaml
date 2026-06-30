@@ -1,0 +1,56 @@
+{{- range .Values.workers }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $.Values.appName }}-{{ .name }}
+  labels:
+{{ include "t2c.labels" $ | indent 4 }}
+    app.kubernetes.io/component: {{ .name }}
+spec:
+  replicas: 1                 # background worker: réplica única (evita jobs duplicados)
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $.Values.appName }}
+      app.kubernetes.io/component: {{ .name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $.Values.appName }}
+        app.kubernetes.io/component: {{ .name }}
+    spec:
+      serviceAccountName: {{ $.Values.appName }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: {{ .name }}
+          image: {{ include "t2c.image" $ }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          command: {{ .command | toJson }}
+          envFrom:
+            - configMapRef:
+                name: {{ $.Values.appName }}-config
+            - secretRef:
+                name: {{ $.Values.appName }}-secrets
+          # Worker é processo CLI (sem servidor HTTP) — não há probes httpGet (desvio justificado
+          # do trio padrão; saúde monitorada pelo worker_health no banco). Confirmar com DevOps.
+          resources:
+{{ toYaml .resources | indent 12 }}
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- end }}

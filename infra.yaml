@@ -1,0 +1,7 @@
+application:
+  name: t2c-data-backend
+  language:
+    name: python
+    version: "3.12"
+# Helm in-tree (.helm/) — sem helm-repo externo.
+# cicd.yaml é in-repo (não há pipeline nomeado Python).

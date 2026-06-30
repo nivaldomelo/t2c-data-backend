@@ -1,0 +1,38 @@
+FROM python:3.13-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+# build-essential fica disponível como fallback para dependências sem wheel;
+# argon2-cffi normalmente instala via wheel.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    postgresql-client \
+    openjdk-21-jre-headless \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd --create-home --uid 10001 appuser
+
+COPY requirements.lock.txt ./requirements.lock.txt
+COPY pyproject.toml uv.lock ./ 
+COPY alembic.ini ./
+COPY src ./src
+COPY docker/entrypoint.dev.sh /entrypoint.dev.sh
+
+RUN pip install --upgrade pip \
+    && pip install -r requirements.lock.txt \
+    && pip install pyspark==3.5.1 \
+    && pip install -e . \
+    && chmod +x /entrypoint.dev.sh \
+    && chown -R appuser:appuser /app /entrypoint.dev.sh
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=5 CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=3)"
+
+USER appuser
+
+ENTRYPOINT ["/entrypoint.dev.sh"]

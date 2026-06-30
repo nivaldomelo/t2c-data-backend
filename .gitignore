@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+.env.local
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.DS_Store
+instance/
+backups/
+spark-data/
+logs/
+*.log
+# secret-values.yaml NÃO é ignorado (só existe em runtime no deploy — padrão Turn2C).

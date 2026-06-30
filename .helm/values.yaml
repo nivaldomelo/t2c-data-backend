@@ -1,0 +1,65 @@
+# Defaults estáticos. Per-env via CI: --set image.tag={env}-{sha}, --set domain=$DNS_DOMAIN,
+# --set ingressEnvironment={env}, --set config.X=${{ vars.X }} e -f ../secret-values.yaml (runtime).
+appName: t2c-data-backend
+domain: ""                 # injetado via --set domain=$DNS_DOMAIN (Org Var {ENV}_DNS_DOMAIN)
+ingressEnvironment: dev    # injetado via --set ingressEnvironment={env}
+
+image:
+  repository: ""           # ECR repo (via --set image.repository)
+  tag: ""                  # {env}-{git-sha} (via --set image.tag)
+  pullPolicy: IfNotPresent
+
+service:
+  port: 8000
+
+api:
+  replicas: 2
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { cpu: "1", memory: 1Gi }
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+
+# Workers de background (scripts CLI, sem HTTP) — Deployment próprio, replicas 1, Recreate, sem Ingress.
+workers:
+  - name: scan-worker
+    command: ["python", "scripts/run_platform_job_worker.py", "--source", "datasource", "--job-type", "scan", "--poll-interval", "2"]
+    resources: { requests: { cpu: 250m, memory: 512Mi }, limits: { cpu: "1", memory: 1Gi } }
+  - name: metabase-worker
+    command: ["python", "scripts/run_metabase_worker.py"]
+    resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { cpu: 500m, memory: 512Mi } }
+
+# Migração Alembic — hook pre-upgrade (não roda nos pods da API).
+migrate:
+  command: ["alembic", "upgrade", "head"]
+  resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { cpu: 500m, memory: 512Mi } }
+
+podDisruptionBudget:
+  minAvailable: 1
+
+serviceMonitor:
+  enabled: true
+  interval: 30s
+  path: /metrics
+
+# ConfigMap (env não-secreta). Tudo que muda por env entra via --set config.X=${{ vars.X }}.
+# A flag de scheduler embutido fica OFF na API (workers cuidam do background).
+config:
+  ENV: dev                 # backend lê o env var ENV (dev|prd|apc)
+  DQ_EXECUTION_ENGINE: spark
+  PLATFORM_AUTOMATION_RULES_ENABLED: "false"
+  LOG_JSON: "true"
+  DB_SCHEMA: t2c_data
+
+# Secret — chaves vazias aqui; valores entram via secret-values.yaml gerado em runtime no deploy.
+# (NUNCA versionar valores reais.)
+secrets:
+  DATABASE_URL: ""          # postgresql+psycopg://...?sslmode=require
+  JWT_SECRET_KEY: ""
+  DATASOURCE_SECRET_KEY: ""
+  AWS_ACCESS_KEY_ID: ""
+  AWS_SECRET_ACCESS_KEY: ""
+  AWS_REGION: ""

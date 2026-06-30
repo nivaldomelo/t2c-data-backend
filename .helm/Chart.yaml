@@ -1,0 +1,6 @@
+apiVersion: v2
+name: t2c-data-backend
+description: t2c_data backend (FastAPI) — Turn2C in-tree Helm chart
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

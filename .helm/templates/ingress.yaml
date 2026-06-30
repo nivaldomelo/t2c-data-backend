@@ -1,0 +1,28 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Values.appName }}
+  labels:
+{{ include "t2c.labels" . | indent 4 }}
+  annotations:
+    # AWS Load Balancer Controller (ALB). Certificado via ACM casado pelo host (sem secretName).
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/healthcheck-path: /liveness
+    # NOTE: confirmar/alinhar as annotations ALB com o template canônico Turn2C (new-app-template).
+spec:
+  rules:
+    - host: {{ .Values.appName }}.{{ .Values.domain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.appName }}
+                port:
+                  number: {{ .Values.service.port }}
+  tls:
+    - hosts:
+        - {{ .Values.appName }}.{{ .Values.domain }}

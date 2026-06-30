@@ -1,0 +1,10 @@
+# DevOps possui APENAS os arquivos de infra (ver infra-standards.md → CODEOWNERS).
+.github/workflows/cicd.yaml    @turn2c/squad-sre-devops
+.github/workflows/*.yaml       @turn2c/squad-sre-devops
+.helm/                         @turn2c/squad-sre-devops
+.helm/**                       @turn2c/squad-sre-devops
+infra.yaml                     @turn2c/squad-sre-devops
+Dockerfile                     @turn2c/squad-sre-devops
+.dockerignore                  @turn2c/squad-sre-devops
+
+# TODO: owner do código de aplicação (src/, tests/, alembic/) — squad dono do t2c_data.

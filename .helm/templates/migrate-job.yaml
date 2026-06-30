@@ -1,0 +1,51 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Values.appName }}-migrate
+  labels:
+{{ include "t2c.labels" . | indent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    # Migração Alembic ANTES de subir o novo código. Falhou → deploy aborta.
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ .Values.appName }}
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ .Values.appName }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: {{ include "t2c.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: {{ .Values.migrate.command | toJson }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Values.appName }}-config
+            - secretRef:
+                name: {{ .Values.appName }}-secrets
+          resources:
+{{ toYaml .Values.migrate.resources | indent 12 }}
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
