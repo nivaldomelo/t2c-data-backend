@@ -3,8 +3,10 @@
 # Requisitos: criar um .env neste repo (a partir de .env.example) com DATABASE_URL etc.
 # Uso:  docker compose -f docker-compose.local.yml up --build
 #
-# Observação: espelha os serviços do monorepo (backend, datasource-scan-worker,
-# metabase-sync-worker, spark-master, spark-worker). O frontend roda à parte (Vite).
+# Volumes compartilhados (espelham o monorepo):
+#   ./spark-data:/data            -> SPARK_RESULTS_DIR=/data/spark-results
+#   ./spark-jobs:/opt/spark/jobs  -> SPARK_JOBS_DIR (jobs PySpark + dq_common p/ executores)
+#   ./jars:/app/jars              -> SPARK_LOCAL_JARS_DIR (drivers JDBC do --jars, no driver)
 
 services:
   spark-master:
@@ -26,6 +28,7 @@ services:
       - "8081:8081"
     volumes:
       - ./spark-data:/data
+      - ./spark-jobs:/opt/spark/jobs
     depends_on: [spark-master]
     networks: [t2c]
 
@@ -47,6 +50,8 @@ services:
       - "8000:8000"
     volumes:
       - ./spark-data:/data
+      - ./spark-jobs:/opt/spark/jobs
+      - ./jars:/app/jars
     depends_on: [spark-master]
     networks: [t2c]
 
@@ -65,6 +70,8 @@ services:
       SPARK_DRIVER_BIND_ADDRESS: 0.0.0.0
     volumes:
       - ./spark-data:/data
+      - ./spark-jobs:/opt/spark/jobs
+      - ./jars:/app/jars
     depends_on: [spark-master, api]
     networks: [t2c]
 

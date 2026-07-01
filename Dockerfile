@@ -28,9 +28,13 @@ COPY alembic.ini ./alembic.ini
 COPY src ./src
 COPY alembic ./alembic
 COPY scripts ./scripts
+# Jobs PySpark (lado driver) + drivers JDBC (--jars): SPARK_JOBS_DIR=/opt/spark/jobs, SPARK_LOCAL_JARS_DIR=/app/jars.
+# (Executores no cluster Spark precisam de dq_common via mount/--py-files — ver nota de produção no README.)
+COPY jars ./jars
+COPY spark-jobs /opt/spark/jobs
 
 RUN pip install . \
-    && chown -R appuser:appuser /app
+    && chown -R appuser:appuser /app /opt/spark/jobs
 
 EXPOSE 8000
 
