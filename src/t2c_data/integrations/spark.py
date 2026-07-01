@@ -92,6 +92,22 @@ class SparkSubmitConfig:
 
         return sorted(jar_paths)
 
+    def resolve_py_files(self, job_filename: str) -> list[str]:
+        """Módulos Python irmãos do job (ex.: dq_common.py) enviados aos executores via --py-files.
+
+        Assim o cluster Spark permanece genérico (não precisa dos jobs do t2c_data na imagem);
+        o executor recebe as dependências no classpath Python. Exclui o próprio job (o spark-submit
+        já distribui o arquivo principal)."""
+        source = Path(self.jobs_dir)
+        if not source.exists():
+            return []
+        primary = job_filename.strip()
+        return sorted(
+            str(path.resolve())
+            for path in source.glob("*.py")
+            if path.is_file() and path.name != primary
+        )
+
 
 def get_spark_submit_config() -> SparkSubmitConfig:
     return SparkSubmitConfig(
@@ -137,6 +153,10 @@ class SparkSubmitRunner:
             command.extend(["--jars", ",".join(local_jars)])
         elif self.config.packages_enabled and self.config.packages.strip():
             command.extend(["--packages", self.config.packages])
+        # Envia módulos irmãos (dq_common) aos executores — cluster Spark permanece genérico.
+        py_files = self.config.resolve_py_files(job_filename)
+        if py_files:
+            command.extend(["--py-files", ",".join(py_files)])
         command.extend([self.config.job_path(job_filename), *args])
         return command
 

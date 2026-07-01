@@ -29,7 +29,8 @@ COPY src ./src
 COPY alembic ./alembic
 COPY scripts ./scripts
 # Jobs PySpark (lado driver) + drivers JDBC (--jars): SPARK_JOBS_DIR=/opt/spark/jobs, SPARK_LOCAL_JARS_DIR=/app/jars.
-# (Executores no cluster Spark precisam de dq_common via mount/--py-files — ver nota de produção no README.)
+# Os executores (imagem genérica do cluster t2c-data-spark) recebem os módulos irmãos (dq_common)
+# do driver via `spark-submit --py-files` — não precisam dos jobs assados na imagem. Ver spark.py.
 COPY jars ./jars
 COPY spark-jobs /opt/spark/jobs
 
