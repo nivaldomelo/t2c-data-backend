@@ -21,6 +21,7 @@ from t2c_data.core.request_context import clear_request_context, set_request_con
 from t2c_data.core.telemetry import runtime_metrics
 from t2c_data.features.integrations import load_metabase_integration_health
 from t2c_data.features.metabase import ensure_metabase_instance_from_settings
+from t2c_data.features.platform_settings.bootstrap import ensure_platform_settings_seed
 from t2c_data.features.metabase.service import enqueue_metabase_instance_sync
 from t2c_data.features.metabase.bootstrap import snapshot_metabase_instance
 from t2c_data.features.platform.scheduler import run_platform_maintenance_cycle, start_platform_scheduler, stop_platform_scheduler
@@ -365,6 +366,7 @@ async def startup_seed() -> None:
         if not dq_rules_table_exists(session):
             logger.warning("DQ rules table not found. Rodar alembic upgrade head")
         run_startup_seed_if_enabled(session)
+        ensure_platform_settings_seed(session)
         instance = ensure_metabase_instance_from_settings(session)
         metabase_bootstrap = snapshot_metabase_instance(instance)
         _log_metabase_startup_health(session)
