@@ -1,0 +1,77 @@
+# Dev local dos repositórios separados: API + workers (scan + metabase) + cluster Spark.
+# Assume os repos como irmãos:  ../t2c-data-spark  ao lado de  t2c-data-backend.
+# Requisitos: criar um .env neste repo (a partir de .env.example) com DATABASE_URL etc.
+# Uso:  docker compose -f docker-compose.local.yml up --build
+#
+# Observação: espelha os serviços do monorepo (backend, datasource-scan-worker,
+# metabase-sync-worker, spark-master, spark-worker). O frontend roda à parte (Vite).
+
+services:
+  spark-master:
+    build: ../t2c-data-spark
+    hostname: spark-master
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master", "--host", "spark-master", "--port", "7077", "--webui-port", "8080"]
+    ports:
+      - "7077:7077"
+      - "8080:8080"
+    networks: [t2c]
+
+  spark-worker:
+    build: ../t2c-data-spark
+    hostname: spark-worker
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077", "--cores", "2", "--memory", "2G", "--webui-port", "8081"]
+    ports:
+      - "8081:8081"
+    depends_on: [spark-master]
+    networks: [t2c]
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    hostname: backend
+    command: ["uvicorn", "t2c_data.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    env_file: [.env]
+    environment:
+      ENV: dev
+      CORS_ALLOW_ORIGINS: http://localhost:3000
+      DQ_EXECUTION_ENGINE: spark
+      SPARK_MASTER_URL: spark://spark-master:7077
+      SPARK_DRIVER_HOST: backend
+      SPARK_DRIVER_BIND_ADDRESS: 0.0.0.0
+    ports:
+      - "8000:8000"
+    depends_on: [spark-master]
+    networks: [t2c]
+
+  scan-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    hostname: scan-worker
+    command: ["python", "scripts/run_platform_job_worker.py", "--source", "datasource", "--job-type", "scan", "--poll-interval", "2"]
+    env_file: [.env]
+    environment:
+      ENV: dev
+      DQ_EXECUTION_ENGINE: spark
+      SPARK_MASTER_URL: spark://spark-master:7077
+      SPARK_DRIVER_HOST: scan-worker
+      SPARK_DRIVER_BIND_ADDRESS: 0.0.0.0
+    depends_on: [spark-master, api]
+    networks: [t2c]
+
+  metabase-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    hostname: metabase-worker
+    command: ["python", "scripts/run_metabase_worker.py"]
+    env_file: [.env]
+    environment:
+      ENV: dev
+    depends_on: [api]
+    networks: [t2c]
+
+networks:
+  t2c:
+    driver: bridge

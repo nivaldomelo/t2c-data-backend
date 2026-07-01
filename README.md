@@ -55,6 +55,18 @@ docker build -f Dockerfile -t t2c-data-backend:local .
 # imagem non-root (uid 1001), sem auto-migrate, CMD uvicorn t2c_data.main:app
 ```
 
+## Dev local completo (API + workers + Spark)
+Espelha o stack do monorepo (API, `scan-worker`, `metabase-worker`, `spark-master`, `spark-worker`).
+Requer o repo **`t2c-data-spark` como irmão** (`../t2c-data-spark`) e um `.env` local (de `.env.example`).
+```bash
+cp .env.example .env   # preencha DATABASE_URL (?sslmode=require em prod), segredos, etc.
+docker compose -f docker-compose.local.yml up --build
+# API em :8000 · Spark UI em :8080 · frontend roda à parte (Vite -> VITE_API_URL=http://localhost:8000/api/v1)
+```
+Os workers de background (mesma imagem, comandos distintos) e o cluster Spark permitem testar
+**DQ/profiling/scan** de ponta a ponta. Em produção (EKS) esses processos são Deployments do Helm
+(`scan-worker`/`metabase-worker`) e o Spark é o cluster do repo `t2c-data-spark`.
+
 ## Health checks (sem auth, nível raiz)
 - `GET /liveness` — processo vivo (startup/liveness probe; alias `GET /health`)
 - `GET /readiness` — `SELECT 1` no banco (503 se indisponível)
