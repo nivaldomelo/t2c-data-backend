@@ -106,3 +106,23 @@ def decrypt_secret_mapping(raw: str | None) -> dict[str, str]:
         for key, value in payload.items()
         if value is not None and str(value).strip()
     }
+
+
+def encrypt_text(plaintext: str | None) -> str:
+    """Encrypt an arbitrary text blob (e.g. a JSON document) at rest with the `enc::` prefix."""
+    if not plaintext:
+        return ""
+    return f"{_SECRET_PREFIX}{_FERNET.encrypt(plaintext.encode('utf-8')).decode('utf-8')}"
+
+
+def decrypt_text(raw: str | None) -> str | None:
+    """Inverse of encrypt_text. Returns None for empty/invalid tokens."""
+    if not raw:
+        return None
+    if not raw.startswith(_SECRET_PREFIX):
+        return raw if plaintext_secret_allowed() else None
+    token = raw[len(_SECRET_PREFIX) :].encode("utf-8")
+    try:
+        return _FERNET.decrypt(token).decode("utf-8")
+    except InvalidToken:
+        return None
