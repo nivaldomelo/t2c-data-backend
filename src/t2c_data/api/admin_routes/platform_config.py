@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import socket
 from time import monotonic
+from typing import Any
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Request
@@ -12,15 +13,18 @@ from sqlalchemy.orm import Session
 from t2c_data.core.config import OperationalIngestionDatabaseConfig, settings
 from t2c_data.core.db import get_db
 from t2c_data.core.deps import require_roles
-from t2c_data.core.secret_store import encrypt_secret_mapping
 from t2c_data.features.platform_settings.resolvers import (
     resolve_control_db_url,
     resolve_metabase_config,
     resolve_spark_config,
 )
-from t2c_data.features.platform_settings.store import get_settings_row, get_settings_row_or_create
+from t2c_data.features.platform_settings.store import (
+    NONSECRET_KEYS,
+    get_settings_row,
+    read_settings_dict,
+    write_settings_dict,
+)
 from t2c_data.models.auth import User
-from t2c_data.models.platform_settings import PlatformSettings
 from t2c_data.schemas.platform_settings import (
     PlatformConfigTestResult,
     PlatformSettingsEffective,
@@ -32,19 +36,22 @@ from t2c_data.services.audit import request_audit_kwargs, write_audit_log_sync
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-_SECRET_FIELDS = {"metabase_auth_secret", "control_db_password"}
-# Columns never surfaced in audit trails as ciphertext.
-_ENCRYPTED_COLUMNS = ("metabase_auth_secret_encrypted", "control_db_password_encrypted")
+
+def _clean(value: Any) -> str | None:
+    if value is None:
+        return None
+    trimmed = str(value).strip()
+    return trimmed or None
 
 
-def _effective(db: Session, row: PlatformSettings | None) -> PlatformSettingsEffective:
+def _effective(db: Session, d: dict[str, Any]) -> PlatformSettingsEffective:
     spark = resolve_spark_config(db)
     mb = resolve_metabase_config(db)
     env_db = OperationalIngestionDatabaseConfig()
 
-    def _pick(attr: str, env_value):
-        stored = getattr(row, attr, None) if row else None
-        return stored if stored not in (None, "") else env_value
+    def _pick(key: str, env_value):
+        v = d.get(key)
+        return v if v not in (None, "") else env_value
 
     env_sslmode = None
     if env_db.database_url and "sslmode=" in env_db.database_url:
@@ -79,23 +86,26 @@ def _effective(db: Session, row: PlatformSettings | None) -> PlatformSettingsEff
     )
 
 
-def _build_out(db: Session, row: PlatformSettings | None) -> PlatformSettingsOut:
-    base = PlatformSettingsOut.model_validate(row) if row is not None else PlatformSettingsOut(effective=PlatformSettingsEffective())
-    base.metabase_auth_secret_set = bool(row and row.metabase_auth_secret_encrypted)
-    base.control_db_password_set = bool(row and row.control_db_password_encrypted)
-    base.effective = _effective(db, row)
-    return base
+def _build_out(db: Session) -> PlatformSettingsOut:
+    d = read_settings_dict(db)
+    row = get_settings_row(db)
+    fields = {key: d.get(key) for key in NONSECRET_KEYS}
+    return PlatformSettingsOut(
+        **fields,
+        metabase_auth_secret_set=bool(_clean(d.get("metabase_auth_secret"))),
+        control_db_password_set=bool(_clean(d.get("control_db_password"))),
+        effective=_effective(db, d),
+        updated_at=row.updated_at if row else None,
+        updated_by_user_id=row.updated_by_user_id if row else None,
+    )
 
 
-def _audit_snapshot(row: PlatformSettings) -> dict:
-    data = {
-        col.name: getattr(row, col.name)
-        for col in row.__table__.columns
-        if col.name not in _ENCRYPTED_COLUMNS
-    }
-    data["metabase_auth_secret_set"] = bool(row.metabase_auth_secret_encrypted)
-    data["control_db_password_set"] = bool(row.control_db_password_encrypted)
-    return data
+def _audit_snapshot(d: dict[str, Any]) -> dict[str, Any]:
+    """Audit-safe projection: non-secret values + booleans for whether secrets are set."""
+    snapshot: dict[str, Any] = {key: d.get(key) for key in NONSECRET_KEYS}
+    snapshot["metabase_auth_secret_set"] = bool(_clean(d.get("metabase_auth_secret")))
+    snapshot["control_db_password_set"] = bool(_clean(d.get("control_db_password")))
+    return snapshot
 
 
 @router.get("/platform-settings", response_model=PlatformSettingsOut)
@@ -103,7 +113,7 @@ def get_platform_settings(
     db: Session = Depends(get_db),
     _: User = Depends(require_roles("admin")),
 ) -> PlatformSettingsOut:
-    return _build_out(db, get_settings_row(db))
+    return _build_out(db)
 
 
 @router.put("/platform-settings", response_model=PlatformSettingsOut)
@@ -113,42 +123,32 @@ def update_platform_settings(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles("admin")),
 ) -> PlatformSettingsOut:
-    row = get_settings_row_or_create(db)
-    before = _audit_snapshot(row)
-    data = payload.model_dump(exclude_unset=True)
+    d = read_settings_dict(db)
+    before = _audit_snapshot(d)
 
-    if "metabase_auth_secret" in data:
-        secret = data.pop("metabase_auth_secret")
-        row.metabase_auth_secret_encrypted = (
-            encrypt_secret_mapping({"auth_secret": secret}) if secret and secret.strip() else None
-        )
-    if "control_db_password" in data:
-        pwd = data.pop("control_db_password")
-        row.control_db_password_encrypted = (
-            encrypt_secret_mapping({"password": pwd}) if pwd and pwd.strip() else None
-        )
-
-    for key, value in data.items():
+    for key, value in payload.model_dump(exclude_unset=True).items():
         if isinstance(value, str):
-            value = value.strip() or None
-        setattr(row, key, value)
+            value = value.strip()
+        if value is None or value == "":
+            d.pop(key, None)  # cleared → inherit from env/default
+        else:
+            d[key] = value
 
-    row.updated_by_user_id = current_user.id
-    db.add(row)
+    write_settings_dict(db, d, user_id=current_user.id)
     db.commit()
-    db.refresh(row)
+
     write_audit_log_sync(
         db,
         action="admin.platform_settings.update",
         entity_type="platform_settings",
-        entity_id=row.id,
+        entity_id=1,
         before=before,
-        after=_audit_snapshot(row),
+        after=_audit_snapshot(read_settings_dict(db)),
         metadata={"message": "Platform settings updated"},
         **request_audit_kwargs(request, current_user),
     )
     db.commit()
-    return _build_out(db, row)
+    return _build_out(db)
 
 
 @router.post("/platform-settings/test/spark", response_model=PlatformConfigTestResult)
@@ -210,7 +210,6 @@ def test_control_db_connection(
     url = resolve_control_db_url(db)
     if not url:
         return PlatformConfigTestResult(ok=False, target="control-db", detail="Banco de controle não configurado.")
-    # Never surface credentials: show only host/db from the parsed URL.
     parsed = urlparse(url.replace("postgresql+psycopg://", "postgresql://"))
     target = f"{parsed.hostname or '?'}/{(parsed.path or '').lstrip('/') or '?'}"
     started = monotonic()
