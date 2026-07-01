@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import PlainTextResponse
@@ -11,6 +10,7 @@ from t2c_data.core.db import get_db
 from t2c_data.core.deps import require_roles
 from t2c_data.features.scanner.execution_diagnostics import serialize_scan_run_detail
 from t2c_data.features.scanner.application import enqueue_datasource_scan
+from t2c_data.features.platform_settings.results_storage import read_results_text
 from t2c_data.models.auth import User
 from t2c_data.models.catalog import DataSource
 from t2c_data.models.scan import ScanDiff, ScanRun
@@ -67,8 +67,8 @@ def get_scan_run_logs(
     if not isinstance(logs_path, str) or not logs_path.strip():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Logs not available for this scan run")
     try:
-        content = Path(logs_path).read_text(encoding="utf-8")
-    except OSError as exc:
+        content = read_results_text(logs_path)
+    except Exception as exc:  # noqa: BLE001 - local OSError or S3 client error → 404
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Logs not available for this scan run") from exc
     return PlainTextResponse(content)
 

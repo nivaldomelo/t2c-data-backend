@@ -23,13 +23,12 @@ from t2c_data.features.data_quality.spark_persistence import (
 from t2c_data.integrations.spark import SparkSubmitError
 from t2c_data.features.data_quality.spark_runs import update_dq_run_status, update_job_run
 from t2c_data.features.data_quality.spark_worker_support import (
-    SPARK_CONFIG,
-    SPARK_RUNNER,
     audit_dq_run,
     build_connection_reference_args,
     dq_log_context,
     extract_spark_app_id,
     logger,
+    resolve_spark_runtime,
     sanitize_process_output,
     serialize_spark_command,
     table_context_from_id_or_fqn,
@@ -70,6 +69,7 @@ def execute_profiling_job(
         job = session.get(DQJobRun, job_run_id)
         if not job:
             return
+        spark_config, spark_runner = resolve_spark_runtime(session)
         try:
             table, schema, _database, datasource = table_context_from_id_or_fqn(session, table_id=table_id, table_fqn=table_fqn)
             if dq_run_id:
@@ -82,7 +82,7 @@ def execute_profiling_job(
 
             job.status = "running"
             job.execution_engine = "spark"
-            job.spark_master_url = SPARK_CONFIG.master_url
+            job.spark_master_url = spark_config.master_url
             job.table_id = table.id
             job.datasource_id = datasource.id
             job.table_fqn = f"{schema.name}.{table.name}"
@@ -134,7 +134,7 @@ def execute_profiling_job(
                 },
             )
 
-            result_file = temporary_result_file(job_type="profiling", job_run_id=job_run_id)
+            result_file = temporary_result_file(job_type="profiling", job_run_id=job_run_id, config=spark_config)
             job_args = [
                 *build_connection_reference_args(datasource_id=datasource.id),
                 "--table-fqn",
@@ -160,13 +160,13 @@ def execute_profiling_job(
                         window.window_end.isoformat(),
                     ]
                 )
-            completed = SPARK_RUNNER.run("dq_profiling_job.py", job_args)
+            completed = spark_runner.run("dq_profiling_job.py", job_args)
             stdout_log = sanitize_process_output(completed.stdout or "")[-20000:]
             stderr_log = sanitize_process_output(completed.stderr or "")[-20000:]
-            logs_path = write_job_logs(job_run_id, job_type="profiling", stdout_log=stdout_log, stderr_log=stderr_log)
+            logs_path = write_job_logs(job_run_id, job_type="profiling", stdout_log=stdout_log, stderr_log=stderr_log, config=spark_config)
             spark_app_id = extract_spark_app_id(stdout_log, stderr_log)
             job.spark_app_id = spark_app_id
-            job.spark_master_url = SPARK_CONFIG.master_url
+            job.spark_master_url = spark_config.master_url
             job.logs_path = logs_path
             job.command = serialize_spark_command(list(completed.args) if isinstance(completed.args, list) else [str(completed.args)])
             job.stdout_log = stdout_log

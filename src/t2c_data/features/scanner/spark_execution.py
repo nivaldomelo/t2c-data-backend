@@ -12,8 +12,10 @@ from sqlalchemy.orm import Session
 from t2c_data.features.data_quality.spark_worker_support import (
     extract_spark_app_id,
     extract_spark_driver_id,
+    resolve_spark_runtime,
     sanitize_process_output,
 )
+from t2c_data.features.platform_settings.results_storage import write_results_text
 from t2c_data.features.scanner.application import sanitize_scan_error
 from t2c_data.features.scanner.execution_diagnostics import infer_scan_failure_stage
 from t2c_data.features.scanner.persistence import mark_scan_run_failed, persist_scan_payload
@@ -85,16 +87,15 @@ def _read_result_payload(result_file: Path) -> ScanPayload:
     return ScanPayload(database_name=database_name, tables=tables)
 
 
-def _write_scan_logs(job_run_id: int, *, stdout_log: str, stderr_log: str) -> str:
-    results_dir = SPARK_CONFIG.ensure_results_dir()
-    path = results_dir / f"datasource-scan-run-{job_run_id}.log"
-    path.write_text(
+def _write_scan_logs(job_run_id: int, *, stdout_log: str, stderr_log: str, config=None) -> str:
+    body = (
         "=== STDOUT ===\n"
         f"{sanitize_process_output(stdout_log).strip()}\n\n"
         "=== STDERR ===\n"
         f"{sanitize_process_output(stderr_log).strip()}\n"
     )
-    return str(path)
+    results_dir = (config or SPARK_CONFIG).results_dir
+    return write_results_text(results_dir, f"datasource-scan-run-{job_run_id}.log", body)
 
 
 def _summary_dict(scan_run: ScanRun) -> dict[str, object]:
@@ -215,10 +216,12 @@ def execute_spark_datasource_scan(
     integration_job_id: int | None = None,
     worker_heartbeat_at: datetime | None = None,
 ) -> SparkDatasourceScanExecutionOutcome:
+    # Resolve effective Spark config at run time (DB overrides → env → default).
+    spark_config, spark_runner = resolve_spark_runtime(session)
     started_at = _utcnow()
     summary_updates = {
         "execution_engine": "spark",
-        "spark_master_url": SPARK_CONFIG.master_url,
+        "spark_master_url": spark_config.master_url,
         "submitted_at": started_at.isoformat(),
         "worker_heartbeat_at": (worker_heartbeat_at or started_at).isoformat(),
         "integration_job_id": integration_job_id,
@@ -258,10 +261,10 @@ def execute_spark_datasource_scan(
             "--scan-run-id",
             str(scan_run.id),
         ]
-        completed = SPARK_RUNNER.run("datasource_scan_job.py", args)
+        completed = spark_runner.run("datasource_scan_job.py", args)
         stdout_log = (completed.stdout or "").strip()
         stderr_log = (completed.stderr or "").strip()
-        logs_path = _write_scan_logs(scan_run.id, stdout_log=stdout_log, stderr_log=stderr_log)
+        logs_path = _write_scan_logs(scan_run.id, stdout_log=stdout_log, stderr_log=stderr_log, config=spark_config)
         spark_app_id = extract_spark_app_id(stdout_log, stderr_log)
         spark_driver_id = extract_spark_driver_id(stdout_log, stderr_log)
 
@@ -283,7 +286,7 @@ def execute_spark_datasource_scan(
                 status="failed",
                 updates={
                     "execution_engine": "spark",
-                    "spark_master_url": SPARK_CONFIG.master_url,
+                    "spark_master_url": spark_config.master_url,
                     "spark_app_id": spark_app_id,
                     "spark_driver_id": spark_driver_id,
                     "logs_path": logs_path,
@@ -313,7 +316,7 @@ def execute_spark_datasource_scan(
                         started_at=started_at,
                         worker_heartbeat_at=worker_heartbeat_at,
                     ),
-                    "spark_master_url": SPARK_CONFIG.master_url,
+                    "spark_master_url": spark_config.master_url,
                     "status": "failed",
                     "error_code": code,
                     "error_detail": detail,
@@ -347,7 +350,7 @@ def execute_spark_datasource_scan(
             status=final_status,
             updates={
                 "execution_engine": "spark",
-                "spark_master_url": SPARK_CONFIG.master_url,
+                "spark_master_url": spark_config.master_url,
                 "spark_app_id": spark_app_id,
                 "spark_driver_id": spark_driver_id,
                 "logs_path": logs_path,
@@ -382,7 +385,7 @@ def execute_spark_datasource_scan(
                     started_at=started_at,
                     worker_heartbeat_at=worker_heartbeat_at,
                 ),
-                "spark_master_url": SPARK_CONFIG.master_url,
+                "spark_master_url": spark_config.master_url,
                 "status": final_status,
                 "legacy_status": legacy_status,
                 "database": payload.database_name,
@@ -412,7 +415,7 @@ def execute_spark_datasource_scan(
             status="failed",
             updates={
                 "execution_engine": "spark",
-                "spark_master_url": SPARK_CONFIG.master_url,
+                "spark_master_url": spark_config.master_url,
                 "spark_app_id": spark_app_id,
                 "spark_driver_id": spark_driver_id,
                 "logs_path": logs_path,
@@ -450,7 +453,7 @@ def execute_spark_datasource_scan(
                     started_at=started_at,
                     worker_heartbeat_at=worker_heartbeat_at,
                 ),
-                "spark_master_url": SPARK_CONFIG.master_url,
+                "spark_master_url": spark_config.master_url,
                 "status": "failed",
                 "error_code": code,
                 "error_detail": detail,

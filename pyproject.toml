@@ -28,6 +28,7 @@ dependencies = [
   "defusedxml>=0.7.1",
   "prometheus-fastapi-instrumentator>=7.0.0",
   "python-json-logger>=2.0.7",
+  "boto3>=1.34.0",
 ]
 
 [project.optional-dependencies]

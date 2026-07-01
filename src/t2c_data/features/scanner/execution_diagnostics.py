@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from t2c_data.models.catalog import DataSource
@@ -32,8 +31,10 @@ def _read_logs_text(logs_path: str | None) -> tuple[str, str]:
     if not logs_path:
         return "", ""
     try:
-        content = Path(logs_path).read_text(encoding="utf-8")
-    except OSError:
+        from t2c_data.features.platform_settings.results_storage import read_results_text
+
+        content = read_results_text(logs_path)
+    except Exception:  # noqa: BLE001 - local OSError or S3 client error → empty
         return "", ""
     if "=== STDERR ===" not in content:
         return content, ""

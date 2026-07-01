@@ -59,6 +59,7 @@ from t2c_data.models.notifications import (
     UserNotificationPreference,
 )
 from t2c_data.models.operations import BackupExecution, OperationalFailureEvent, OperationalFailureTaxonomy
+from t2c_data.models.platform_settings import PlatformSettings
 from t2c_data.models.semantic import SemanticDataProduct, SemanticDomain, SemanticLink
 from t2c_data.models.platform import (
     ApiRateLimitBucket,
@@ -182,6 +183,7 @@ __all__ = [
     "DataLakeTableObservation",
     "AssetRowCountSnapshot",
     "IntegrationSyncJob",
+    "PlatformSettings",
     "PlatformWorkerHeartbeat",
     "TimelineEpisodeAction",
     "Role",

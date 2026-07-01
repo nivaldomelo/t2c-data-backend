@@ -113,17 +113,27 @@ def extract_spark_driver_id(*texts: str) -> str | None:
     return None
 
 
-def write_job_logs(job_run_id: int, *, job_type: str, stdout_log: str, stderr_log: str) -> str:
-    result_dir = SPARK_CONFIG.ensure_results_dir()
-    path = result_dir / f"{job_type}-run-{job_run_id}.log"
+def resolve_spark_runtime(session) -> tuple["SparkSubmitConfig", SparkSubmitRunner]:
+    """Resolve the effective Spark config (DB overrides → env → default) plus a runner.
+
+    Lazily imported to avoid import cycles; falls back to the module env/default singletons."""
+    from t2c_data.features.platform_settings.resolvers import resolve_spark_config
+
+    config = resolve_spark_config(session)
+    return config, SparkSubmitRunner(config)
+
+
+def write_job_logs(job_run_id: int, *, job_type: str, stdout_log: str, stderr_log: str, config=None) -> str:
+    from t2c_data.features.platform_settings.results_storage import write_results_text
+
     body = (
         "=== STDOUT ===\n"
         f"{sanitize_process_output(stdout_log or '')}\n\n"
         "=== STDERR ===\n"
         f"{sanitize_process_output(stderr_log or '')}\n"
     )
-    path.write_text(body)
-    return str(path)
+    results_dir = (config or SPARK_CONFIG).results_dir
+    return write_results_text(results_dir, f"{job_type}-run-{job_run_id}.log", body)
 
 
 def jdbc_config_for_datasource(datasource: DataSource) -> dict[str, str]:
@@ -187,8 +197,8 @@ def table_context_from_id_or_fqn(session, *, table_id: int | None, table_fqn: st
     raise ValueError("table_id or table_fqn is required")
 
 
-def temporary_result_file(*, job_type: str, job_run_id: int) -> Path:
-    return SPARK_CONFIG.temporary_result_file(job_type=job_type, job_run_id=job_run_id)
+def temporary_result_file(*, job_type: str, job_run_id: int, config=None) -> Path:
+    return (config or SPARK_CONFIG).temporary_result_file(job_type=job_type, job_run_id=job_run_id)
 
 
 __all__ = [
@@ -201,6 +211,7 @@ __all__ = [
     "extract_spark_driver_id",
     "jdbc_config_for_datasource",
     "logger",
+    "resolve_spark_runtime",
     "sanitize_process_output",
     "serialize_spark_command",
     "table_context_from_id_or_fqn",

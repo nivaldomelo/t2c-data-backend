@@ -31,12 +31,22 @@ from t2c_data.features.data_quality.spark_runs import (
     wait_for_dq_job_run,
 )
 from t2c_data.features.data_quality.spark_workers import execute_profiling_job, execute_rules_job
+from t2c_data.features.platform_settings.resolvers import resolve_spark_config
 from t2c_data.integrations.spark import get_spark_submit_config
 from t2c_data.models.dq import DQJobRun, DQRun
 from t2c_data.services.audit import write_audit_log_sync
 
 logger = logging.getLogger(__name__)
 SPARK_CONFIG = get_spark_submit_config()
+
+
+def _resolved_master_url() -> str:
+    """Effective Spark master URL (DB override → env → default), best-effort."""
+    try:
+        with SessionLocal() as session:
+            return resolve_spark_config(session).master_url
+    except Exception:
+        return SPARK_CONFIG.master_url
 
 
 def _dq_log_context(
@@ -118,7 +128,7 @@ def enqueue_profiling_job(
         table_id=table_id,
         table_fqn=table_fqn,
         requested_by_user_id=requested_by_user_id,
-        spark_master_url=SPARK_CONFIG.master_url,
+        spark_master_url=_resolved_master_url(),
     )
     Thread(
         target=run_with_request_context,
@@ -151,7 +161,7 @@ def enqueue_rules_job(
         table_id=table_id,
         table_fqn=table_fqn,
         requested_by_user_id=requested_by_user_id,
-        spark_master_url=SPARK_CONFIG.master_url,
+        spark_master_url=_resolved_master_url(),
     )
     with SessionLocal() as session:
         entity = session.get(DQJobRun, job.id)
