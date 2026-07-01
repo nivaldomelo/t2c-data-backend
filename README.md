@@ -7,6 +7,57 @@ para EKS (Helm in-tree) no padrão Turn2C.
 > Repositório gerado a partir da separação do monorepo `t2c_data` (ver
 > `docs/separacao-backend-frontend.md` no repo original). Pacote Python em **`src/t2c_data/`**.
 
+---
+
+## 🚀 Deploy (DevOps) — variáveis de ambiente e migrações
+
+> **Leitura obrigatória antes do primeiro deploy.** Ambientes: **`develop` → dev**, **`main` → prd**
+> (este projeto **não** usa `apc`/apice — isso é do projeto Apice). RDS/Metabase/Spark/S3 são distintos por ambiente.
+
+### O que o DevOps precisa provisionar
+- **RDS PostgreSQL vazio por ambiente** (dev e prd) + usuário com **permissão de DDL** — as migrações criam o schema `t2c_data` e todas as tabelas. **SSL obrigatório** (`?sslmode=require`).
+- (Se usar operação/observabilidade) banco **operacional de controle** (schema `controle`), **bucket S3** (results do Spark / data lake) e **credenciais AWS**.
+- Cluster **Spark** (repo `t2c-data-spark`) alcançável pela rede do EKS.
+
+### Variáveis de ambiente
+No Helm entram em **ConfigMap** (`values.config`, não-secretas) e **Secret** (`values.secrets`, valores reais via `secret-values.yaml` gerado no deploy a partir dos GitHub Secrets).
+
+> Spark, Metabase e o banco de controle **também** podem ser ajustados em runtime pela UI (**Administração → Configuração da Plataforma**). As env vars abaixo são o **baseline** de boot. **Só** podem vir de env (nunca da UI): `DATABASE_URL`, `JWT_SECRET_KEY`, `DATASOURCE_SECRET_KEY`.
+
+**Obrigatórias / críticas (prd recusa subir sem):**
+
+| Var | Local | Nota |
+|---|---|---|
+| `ENV` | Config | `dev` ou `prd` (qualquer valor ≠ dev/local/test = produção → validações estritas). |
+| `DATABASE_URL` | Secret | Banco do catálogo. **Sempre** `postgresql+psycopg://user:pass@host:5432/db?sslmode=require`. |
+| `JWT_SECRET_KEY` | Secret | Forte, não-default (assina tokens). |
+| `DATASOURCE_SECRET_KEY` | Secret | Forte, **≠ JWT**, sem "change-me". ⚠️ Criptografa credenciais de fontes **e todo o blob de Configuração da Plataforma**. Perder/rotacionar sem re-encriptar torna esses dados ilegíveis. |
+| `CORS_ALLOW_ORIGINS` | Config | Domínio do frontend (CloudFront), vírgula-separado. **Nunca `*`** em prd. |
+| `ENABLE_DB_SEED` | Config | **`false`** em prd. |
+| `INITIAL_ADMIN_EMAIL` / `INITIAL_ADMIN_PASSWORD` | Secret | Admin inicial criado pela **migração** de RBAC (senha forte). |
+
+**Banco de controle (read-model, schema `controle`):** `OPERATIONAL_DATABASE_URL` (Secret, com `?sslmode=require`) **ou** `OPERATIONAL_DB_HOST/PORT/NAME/USER` (Config) + `OPERATIONAL_DB_PASSWORD` (Secret) + `OPERATIONAL_DB_SCHEMA` (Config, default `controle`).
+
+**Spark:** `DQ_EXECUTION_ENGINE=spark`, `SPARK_MASTER_URL=spark://t2c-data-spark-master.<ns>.svc.cluster.local:7077`, `SPARK_DRIVER_HOST`, `SPARK_DRIVER_BIND_ADDRESS=0.0.0.0`, `SPARK_RESULTS_DIR` (**use `s3a://bucket/prefixo` em prd**). (Config)
+
+**AWS:** `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (Secret) + `AWS_REGION` (Config).
+
+**Metabase (opcional):** `METABASE_ENABLED`, `METABASE_BASE_URL`, `METABASE_AUTH_TYPE`, `METABASE_AUTH_USERNAME` (Config) + `METABASE_AUTH_SECRET` (Secret).
+
+**Observabilidade / e-mail (opcional):** `LOG_JSON=true` (Config); SMTP: `SMTP_HOST/PORT/USERNAME` (Config) + `SMTP_PASSWORD` (Secret).
+
+Schedulers já vêm em `worker` (correto p/ prd) — não use `embedded_dev_only` fora de dev. Lista completa em [.env.example](.env.example).
+
+### Criação/atualização das tabelas (dev e prd)
+Alembic via **hook do Helm** — **não** há auto-migração no boot da API.
+1. `git push` (`develop`→dev, `main`→prd) → CI/CD builda imagem → ECR.
+2. `helm upgrade -i` aplica em ordem: **ConfigMap + Secret** (hook weight `-10`) → **Job `{app}-migrate`** (`pre-upgrade`, weight `-5`) que roda **`alembic upgrade head`**. `backoffLimit: 0` → **falhou a migração, o deploy aborta** (pods novos não sobem).
+3. Só então os Deployments (API + workers) sobem com o schema atualizado.
+
+As migrações **criam o schema `t2c_data` e as tabelas**, semeiam **RBAC + admin inicial** (usa `INITIAL_ADMIN_*`); no 1º boot o app grava os **defaults de referência** de Configuração da Plataforma (não-secretos, criptografados) uma única vez. **dev e prd usam a mesma cadeia de migrações**, mudando apenas o RDS e a `DATASOURCE_SECRET_KEY` de cada ambiente.
+
+---
+
 ## Stack
 - Python 3.12, **FastAPI**, **SQLAlchemy 2.0**, **Alembic**
 - PostgreSQL (schema `t2c_data`); Spark para DQ/profiling; integrações Metabase, Data Lake (S3), Airflow (read-model)
