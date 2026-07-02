@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from t2c_data.core.db import get_db
 from t2c_data.core.deps import require_permission, require_roles
 from t2c_data.features.export_jobs import ExportArtifactResult, enqueue_export_job, register_export_request_audit, serialize_export_job
-from t2c_data.features.export_security import DEFAULT_EXPORT_LIMIT, audit_export_event, enforce_export_limit, redact_export_value, resolve_export_limit
+from t2c_data.features.export_security import safe_csv_writer, safe_sheet_append, DEFAULT_EXPORT_LIMIT, audit_export_event, enforce_export_limit, redact_export_value, resolve_export_limit
 from t2c_data.features.governance import (
     apply_metadata_change_request,
     apply_governance_policy_recommendations,
@@ -224,7 +224,7 @@ def build_ownership_export_artifact(
         "recommended_action",
     ]
     buffer = StringIO()
-    writer = csv.writer(buffer)
+    writer = safe_csv_writer(buffer)
     writer.writerow(headers)
 
     def _empty_row() -> dict[str, str]:
@@ -452,7 +452,7 @@ def governance_owners_export_csv(
         "recommended_action",
     ]
     buffer = StringIO()
-    writer = csv.writer(buffer)
+    writer = safe_csv_writer(buffer)
     writer.writerow(headers)
 
     def _empty_row() -> dict[str, str]:
@@ -1337,7 +1337,7 @@ def export_governance_pending_center_csv(
         },
     )
     buffer = StringIO()
-    writer = csv.writer(buffer)
+    writer = safe_csv_writer(buffer)
     writer.writerow(
         [
             "pendencia",
@@ -1452,7 +1452,7 @@ def export_governance_pending_center_xlsx(
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Pendencias"
-    sheet.append(
+    safe_sheet_append(sheet, 
         [
             "Pendência",
             "Severidade",
@@ -1477,7 +1477,7 @@ def export_governance_pending_center_xlsx(
         ]
     )
     for item in payload["items"]:
-        sheet.append(
+        safe_sheet_append(sheet, 
             [
                 item["title"],
                 item["severity_label"],
@@ -1552,7 +1552,7 @@ def export_governance_campaign_csv(
         filters={"campaign_key": campaign_key},
     )
     buffer = StringIO()
-    writer = csv.writer(buffer)
+    writer = safe_csv_writer(buffer)
     writer.writerow(
         [
             "tabela",
@@ -1621,7 +1621,7 @@ def export_governance_campaign_xlsx(
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Campanha"
-    sheet.append(
+    safe_sheet_append(sheet, 
         [
             "Tabela",
             "Fonte",
@@ -1639,7 +1639,7 @@ def export_governance_campaign_xlsx(
         ]
     )
     for item in payload["items"]:
-        sheet.append(
+        safe_sheet_append(sheet, 
             [
                 item["table_fqn"],
                 item["datasource_name"],

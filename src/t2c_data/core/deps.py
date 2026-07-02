@@ -11,7 +11,6 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.orm import Session
 
 from t2c_data.core.db import get_db
-from t2c_data.core.network import get_request_client_ip
 from t2c_data.core.security import decode_token, decode_token_payload
 from t2c_data.core.rbac import is_admin_role, user_role_names
 from t2c_data.features.platform.alerting import emit_permission_denied_alert
@@ -272,15 +271,14 @@ def require_permission(permission_name: str):
                 write_audit_log_sync(
                     db,
                     action="platform.permission.denied",
-                    user_id=current_user.id,
-                    user_email=current_user.email,
-                    ip=get_request_client_ip(request),
-                    user_agent=request.headers.get("user-agent"),
                     entity_type="permission",
                     entity_id=permission_name,
                     field_name=permission_name,
                     source_module="platform",
                     metadata={"permission_name": permission_name, "path": request.url.path, "method": request.method},
+                    # request_audit_kwargs já provê user_id/user_email/ip/user_agent —
+                    # passá-los também gerava TypeError (duplicate keyword) engolido pelo except,
+                    # deixando o audit/alerta de permissão negada SEM efeito.
                     **request_audit_kwargs(request, current_user),
                 )
                 emit_permission_denied_alert(db, request=request, current_user=current_user, permission_name=permission_name)

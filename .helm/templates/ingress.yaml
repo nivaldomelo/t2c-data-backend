@@ -10,6 +10,12 @@ metadata:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/healthcheck-path: /liveness
+    # Força HTTPS (redireciona 80->443).
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+    # SEGURANÇA (DevOps): API pública internet-facing — anexar WAFv2 e (se aplicável) o cert ACM:
+    #   alb.ingress.kubernetes.io/wafv2-acl-arn: arn:aws:wafv2:<region>:<acct>:regional/webacl/<name>/<id>
+    #   alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:<region>:<acct>:certificate/<id>
     # NOTE: confirmar/alinhar as annotations ALB com o template canônico Turn2C (new-app-template).
 spec:
   rules:

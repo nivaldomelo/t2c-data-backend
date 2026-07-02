@@ -122,6 +122,11 @@ def safe_csv_writer(fileobj: Any) -> "SafeCsvWriter":
     return SafeCsvWriter(csv.writer(fileobj))
 
 
+def safe_sheet_append(sheet: Any, row: Any) -> None:
+    """openpyxl worksheet.append neutralizando cada célula string (anti-formula-injection em XLSX)."""
+    sheet.append([neutralize_spreadsheet_formula(cell) if isinstance(cell, str) else cell for cell in row])
+
+
 def redact_export_value(value: Any, *, field_name: str | None = None) -> str:
     normalized_field = (field_name or "").strip().lower().replace("-", "_")
     if normalized_field in {"owner", "owner_name", "owner_email", "user_email", "actor_email"}:

@@ -15,7 +15,11 @@ from t2c_data.features.integrations.data_lake_schedules import (
     update_data_lake_scan_schedule_run_state,
 )
 from t2c_data.features.export_jobs import process_export_job
-from t2c_data.features.platform.jobs import claim_queued_integration_job, finish_integration_job_record
+from t2c_data.features.platform.jobs import (
+    claim_queued_integration_job,
+    finish_integration_job_record,
+    reclaim_stalled_running_jobs,
+)
 from t2c_data.features.platform.scheduler import process_platform_maintenance_job
 from t2c_data.features.platform.worker_health import (
     WorkerHeartbeatContext,
@@ -411,6 +415,7 @@ def run_integration_worker_forever(
         job_type,
         interval,
     )
+    idle_cycles = 0
     while True:
         try:
             job = process_next_integration_job(
@@ -427,7 +432,17 @@ def run_integration_worker_forever(
             )
             job = None
         if job is None:
+            idle_cycles += 1
+            # Auto-cura: periodicamente recupera jobs presos em 'running' (crash/queda de conexão).
+            if idle_cycles % 30 == 0:
+                try:
+                    with session_factory() as session:
+                        reclaim_stalled_running_jobs(session, source=source, job_type=job_type)
+                except Exception:  # noqa: BLE001
+                    logger.exception("reclaim_stalled_running_jobs falhou; seguindo")
             sleep(interval)
+        else:
+            idle_cycles = 0
 
 
 def run_platform_maintenance_worker_forever(

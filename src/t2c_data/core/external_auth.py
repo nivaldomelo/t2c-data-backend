@@ -41,10 +41,8 @@ def get_external_api_key(
                 action="platform.api_key.auth_failed",
                 field_name="missing",
                 source_module="external_api",
-                ip=get_request_client_ip(request),
-                user_agent=request.headers.get("user-agent"),
                 metadata={"outcome": "missing", "path": request.url.path, "method": request.method},
-                **request_audit_kwargs(request, None),
+                **request_audit_kwargs(request, None),  # já inclui ip/user_agent
             )
             emit_api_key_abuse_alert(db, request=request, outcome="missing", api_key_public_id=None)
             db.commit()
@@ -57,18 +55,17 @@ def get_external_api_key(
     if not is_api_key_ip_allowed(api_key, client_ip):
         runtime_metrics.api_auth_event(outcome="ip_denied")
         try:
+            audit_kwargs = request_audit_kwargs(request, None)
+            audit_kwargs["user_id"] = api_key.created_by_user_id  # sobrepõe (evita duplicate keyword)
             write_audit_log_sync(
                 db,
                 action="platform.api_key.auth_failed",
-                user_id=api_key.created_by_user_id,
                 entity_type="platform_api_key",
                 entity_id=api_key.id,
                 field_name="ip_denied",
                 source_module="external_api",
-                ip=client_ip,
-                user_agent=request.headers.get("user-agent"),
                 metadata={"outcome": "ip_denied", "api_key_public_id": api_key.public_id, "path": request.url.path, "method": request.method},
-                **request_audit_kwargs(request, None),
+                **audit_kwargs,
             )
             emit_api_key_abuse_alert(db, request=request, outcome="ip_denied", api_key_public_id=api_key.public_id)
             db.commit()
@@ -92,13 +89,20 @@ def get_external_api_key(
         "allowed_ips_count": len(api_key.allowed_ips_json or []),
     }
     request.state.external_user = _external_user()
+    # Persiste o tracking de uso (last_used_*/usage_count) ANTES do audit, para não ser
+    # descartado por um rollback caso o registro de auditoria falhe.
     try:
+        db.commit()
+    except Exception:
+        db.rollback()
+    try:
+        audit_kwargs = request_audit_kwargs(request, None)
+        audit_kwargs["actor_name"] = "External API"  # sobrepõe (evita duplicate keyword)
         write_audit_log_sync(
             db,
             action="platform.api_key.used",
             entity_type="platform_api_key",
             entity_id=api_key.id,
-            actor_name="External API",
             metadata={
                 "api_key_public_id": api_key.public_id,
                 "api_key_name": api_key.name,
@@ -111,7 +115,7 @@ def get_external_api_key(
             source_module="external_api",
             is_sensitive_change=True,
             sensitive_category="credential",
-            **request_audit_kwargs(request, None),
+            **audit_kwargs,
         )
         db.commit()
     except Exception:
@@ -131,16 +135,15 @@ def require_api_key_scopes(*required_scopes: str):
         except HTTPException:
             runtime_metrics.api_auth_event(outcome="scope_denied")
             try:
+                audit_kwargs = request_audit_kwargs(request, None)
+                audit_kwargs["user_id"] = result.key.created_by_user_id  # sobrepõe (evita duplicate keyword)
                 write_audit_log_sync(
                     db,
                     action="platform.api_key.auth_failed",
-                    user_id=result.key.created_by_user_id,
                     entity_type="platform_api_key",
                     entity_id=result.key.id,
                     field_name="scope_denied",
                     source_module="external_api",
-                    ip=get_request_client_ip(request),
-                    user_agent=request.headers.get("user-agent"),
                     metadata={
                         "outcome": "scope_denied",
                         "api_key_public_id": result.key.public_id,
@@ -148,7 +151,7 @@ def require_api_key_scopes(*required_scopes: str):
                         "path": request.url.path,
                         "method": request.method,
                     },
-                    **request_audit_kwargs(request, None),
+                    **audit_kwargs,
                 )
                 emit_api_key_abuse_alert(
                     db,

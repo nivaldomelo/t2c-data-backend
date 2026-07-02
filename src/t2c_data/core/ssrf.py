@@ -15,6 +15,8 @@ from urllib.parse import urlparse
 
 _AWS_REGION_RE = re.compile(r"^[a-z]{2}-[a-z]+-\d$")
 _ALLOWED_SCHEMES = {"http", "https"}
+# Endereços de metadata de nuvem que NÃO são pegos por is_link_local (ex.: IMDS IPv6 unique-local).
+_METADATA_IPS = frozenset({ipaddress.ip_address("fd00:ec2::254")})
 
 
 class SsrfValidationError(ValueError):
@@ -83,7 +85,9 @@ def assert_safe_connect_host(host: str, *, label: str = "host") -> None:
             ip = ipaddress.ip_address(info[4][0])
         except ValueError:
             raise SsrfValidationError(f"{label} inválido.")
-        if ip.is_loopback or ip.is_link_local or ip.is_unspecified or ip.is_multicast or ip.is_reserved:
+        # fd00:ec2::254 (IMDS IPv6) é unique-local (classificado como "private"), então precisa
+        # de deny explícito além dos checks abaixo.
+        if ip in _METADATA_IPS or ip.is_loopback or ip.is_link_local or ip.is_unspecified or ip.is_multicast or ip.is_reserved:
             raise SsrfValidationError(
                 f"{label} aponta para endereço interno não permitido (loopback/link-local/metadata)."
             )

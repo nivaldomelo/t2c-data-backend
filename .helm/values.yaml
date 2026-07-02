@@ -63,3 +63,4 @@ secrets:
   AWS_ACCESS_KEY_ID: ""
   AWS_SECRET_ACCESS_KEY: ""
   AWS_REGION: ""
+  SPARK_AUTH_SECRET: ""      # só se o cluster Spark estiver com spark.authEnabled=true (mesmo valor)

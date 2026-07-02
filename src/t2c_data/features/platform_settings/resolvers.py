@@ -106,6 +106,9 @@ def resolve_control_db_url(session: Session | None = None) -> str | None:
     password = _clean(d.get("control_db_password")) or ""
     port = int(d.get("control_db_port") or 5432)
     sslmode = _clean(d.get("control_db_sslmode"))
+    # Fail-secure: host remoto sem sslmode explícito assume require (evita conexão em claro).
+    if not sslmode and host.lower() not in {"localhost", "127.0.0.1", "::1", "host.docker.internal"}:
+        sslmode = "require"
     # URL.create escapa cada componente (evita injeção de URL/param-libpq via senha/host/name).
     return URL.create(
         "postgresql+psycopg",

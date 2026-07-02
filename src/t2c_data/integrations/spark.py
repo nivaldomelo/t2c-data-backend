@@ -145,11 +145,6 @@ class SparkSubmitRunner:
             f"spark.driver.bindAddress={self.config.driver_bind_address}",
             "--conf",
             f"spark.redaction.regex={self.config.redaction_regex}",
-            *(
-                ["--conf", "spark.authenticate=true", "--conf", f"spark.authenticate.secret={self.config.auth_secret}"]
-                if self.config.auth_secret
-                else []
-            ),
             "--driver-memory",
             self.config.driver_memory,
             "--executor-memory",
@@ -167,9 +162,23 @@ class SparkSubmitRunner:
         command.extend([self.config.job_path(job_filename), *args])
         return command
 
+    def _write_auth_properties_file(self) -> str:
+        """Grava spark.authenticate.secret num arquivo 0600 (NUNCA no argv/ps/logs)."""
+        fd, path = tempfile.mkstemp(prefix="spark-auth-", suffix=".properties")
+        try:
+            os.write(fd, f"spark.authenticate true\nspark.authenticate.secret {self.config.auth_secret}\n".encode("utf-8"))
+        finally:
+            os.close(fd)
+        os.chmod(path, 0o600)
+        return path
+
     def run(self, job_filename: str, args: list[str], *, timeout_seconds: int | None = None) -> subprocess.CompletedProcess[str]:
         effective_timeout = timeout_seconds or self.config.timeout_seconds
         cmd = self.build_command(job_filename, args)
+        # Segredo de autenticação Spark via properties-file (0600), fora do argv/ps/logs.
+        props_path = self._write_auth_properties_file() if self.config.auth_secret else None
+        if props_path:
+            cmd = [cmd[0], "--properties-file", props_path, *cmd[1:]]
         started_at = monotonic()
         logger.info(
             "spark_submit_start job_filename=%s timeout_seconds=%s master_url=%s command=%s",
@@ -197,6 +206,12 @@ class SparkSubmitRunner:
             raise SparkSubmitError(
                 f"spark-submit timed out after {effective_timeout}s for job {job_filename}"
             ) from exc
+        finally:
+            if props_path:
+                try:
+                    os.unlink(props_path)
+                except OSError:
+                    pass
         duration_ms = int((monotonic() - started_at) * 1000)
         logger.info(
             "spark_submit_finish job_filename=%s duration_ms=%s return_code=%s",
