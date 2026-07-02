@@ -27,7 +27,9 @@ api:
 workers:
   - name: scan-worker
     command: ["python", "scripts/run_platform_job_worker.py", "--source", "datasource", "--job-type", "scan", "--poll-interval", "2"]
-    resources: { requests: { cpu: 250m, memory: 512Mi }, limits: { cpu: "1", memory: 1Gi } }
+    # Hospeda o DRIVER do spark-submit (client-mode, SPARK_DRIVER_MEMORY=2g). Processa 1 job
+    # por vez → 1 driver por vez; limit dá folga p/ 2g de heap + Python. Escala MÉDIA.
+    resources: { requests: { cpu: 500m, memory: 1Gi }, limits: { cpu: "2", memory: 3Gi } }
   - name: metabase-worker
     command: ["python", "scripts/run_metabase_worker.py"]
     resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { cpu: 500m, memory: 512Mi } }
@@ -53,6 +55,13 @@ config:
   PLATFORM_AUTOMATION_RULES_ENABLED: "false"
   LOG_JSON: "true"
   DB_SCHEMA: t2c_data
+  # Recursos do spark-submit (client-mode) — escala MÉDIA. Casam com o cluster t2c-data-spark
+  # (3 workers × 4c/8G): executor 4g/2 cores, teto 4 cores/job (~3 jobs simultâneos). Driver no pod.
+  SPARK_DRIVER_MEMORY: "2g"
+  SPARK_EXECUTOR_MEMORY: "4g"
+  SPARK_EXECUTOR_CORES: "2"
+  SPARK_CORES_MAX: "4"
+  SPARK_SUBMIT_TIMEOUT_SECONDS: "1800"   # tabelas grandes no 1º profiling (full)
 
 # Secret — chaves vazias aqui; valores entram via secret-values.yaml gerado em runtime no deploy.
 # (NUNCA versionar valores reais.)

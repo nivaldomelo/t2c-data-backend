@@ -36,6 +36,8 @@ class SparkSubmitConfig:
     redaction_regex: str
     timeout_seconds: int
     auth_secret: str | None = None
+    executor_cores: str | None = None
+    cores_max: str | None = None
 
     def job_path(self, job_filename: str) -> str:
         return f"{self.jobs_dir.rstrip('/')}/{job_filename}"
@@ -127,6 +129,8 @@ def get_spark_submit_config() -> SparkSubmitConfig:
         redaction_regex=os.getenv("SPARK_REDACTION_REGEX", DEFAULT_SPARK_REDACTION_REGEX),
         timeout_seconds=int(os.getenv("SPARK_SUBMIT_TIMEOUT_SECONDS", "900")),
         auth_secret=(os.getenv("SPARK_AUTH_SECRET") or "").strip() or None,
+        executor_cores=(os.getenv("SPARK_EXECUTOR_CORES") or "").strip() or None,
+        cores_max=(os.getenv("SPARK_CORES_MAX") or "").strip() or None,
     )
 
 
@@ -149,6 +153,10 @@ class SparkSubmitRunner:
             self.config.driver_memory,
             "--executor-memory",
             self.config.executor_memory,
+            # Limita cores por executor e o teto de cores por aplicação (standalone), para
+            # múltiplos jobs coexistirem no cluster. Só entram se configurados via env.
+            *(["--conf", f"spark.executor.cores={self.config.executor_cores}"] if self.config.executor_cores else []),
+            *(["--conf", f"spark.cores.max={self.config.cores_max}"] if self.config.cores_max else []),
         ]
         local_jars = self.config.resolve_local_jars()
         if local_jars:
