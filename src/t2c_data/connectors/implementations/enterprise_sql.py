@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from t2c_data.connectors.base import BaseConnector, ConnectorCapabilities, MissingDriverError
+from t2c_data.connectors.base import BaseConnector, ConnectorCapabilities, ConnectorError, MissingDriverError
 from t2c_data.connectors.implementations.helpers import optional_int, require_secret, require_value
 
 
@@ -32,8 +32,20 @@ class SqlServerConnector(BaseConnector):
         password = require_secret(self.secrets, "password")
         encrypt = str(self.connection.get("encrypt") or "yes")
         trust_cert = str(self.connection.get("trust_server_certificate") or "yes")
+        # Anti connection-string injection: campos estruturais não podem conter ; { } (delimitadores ODBC).
+        for label, value in (
+            ("driver", driver), ("host", host), ("database", database),
+            ("encrypt", encrypt), ("trust_server_certificate", trust_cert),
+        ):
+            if any(ch in str(value) for ch in ";{}"):
+                raise ConnectorError(f"Valor inválido em '{label}': ';', '{{' e '}}' não são permitidos.", code="invalid_config")
+
+        def _brace(value: str) -> str:
+            # Valores livres (user/senha) entre chaves, com '}' escapado como '}}' (sintaxe ODBC).
+            return "{" + str(value).replace("}", "}}") + "}"
+
         conn_str = (
-            f"DRIVER={{{driver}}};SERVER={host},{port};DATABASE={database};UID={username};PWD={password};"
+            f"DRIVER={{{driver}}};SERVER={host},{port};DATABASE={database};UID={_brace(username)};PWD={_brace(password)};"
             f"Encrypt={encrypt};TrustServerCertificate={trust_cert};Connection Timeout=5;"
         )
         return pyodbc.connect(conn_str, timeout=5)

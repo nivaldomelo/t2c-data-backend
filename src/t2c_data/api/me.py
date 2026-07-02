@@ -11,6 +11,7 @@ from t2c_data.features.auth.password_policy import password_expiry_status
 from t2c_data.core.secret_store import decrypt_secret_mapping, encrypt_secret_mapping
 from t2c_data.core.security import (
     build_totp_provisioning_uri,
+    find_totp_counter,
     generate_totp_secret,
     validate_password_policy,
     verify_password,
@@ -218,10 +219,13 @@ def verify_mfa(
     secret = _mfa_secret_value(current_user)
     if not secret:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="MFA setup has not been started")
-    if not verify_totp_code(secret, payload.code):
+    matched_counter = find_totp_counter(secret, payload.code)
+    if matched_counter is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid MFA code")
 
     current_user.mfa_enabled = True
+    # Anti-replay: consome o contador usado no enrollment para não ser reusado no login.
+    current_user.mfa_last_counter = matched_counter
     # Enrolling within the grace window clears any pending lock/grace state.
     current_user.mfa_locked = False
     current_user.mfa_locked_at = None

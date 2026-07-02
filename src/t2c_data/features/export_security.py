@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -96,6 +97,29 @@ def neutralize_spreadsheet_formula(value: str) -> str:
     if value and value[0] in _FORMULA_PREFIXES:
         return "\t" + value
     return value
+
+
+class SafeCsvWriter:
+    """csv.writer wrapper que neutraliza CADA célula string (anti CSV/formula injection).
+
+    Garante que identificadores de fontes externas (schema/tabela/coluna, telemetria) não
+    sejam interpretados como fórmula ao abrir o CSV no Excel/Sheets."""
+
+    def __init__(self, writer: Any) -> None:
+        self._writer = writer
+
+    def writerow(self, row: Any) -> Any:
+        return self._writer.writerow(
+            [neutralize_spreadsheet_formula(cell) if isinstance(cell, str) else cell for cell in row]
+        )
+
+    def writerows(self, rows: Any) -> None:
+        for row in rows:
+            self.writerow(row)
+
+
+def safe_csv_writer(fileobj: Any) -> "SafeCsvWriter":
+    return SafeCsvWriter(csv.writer(fileobj))
 
 
 def redact_export_value(value: Any, *, field_name: str | None = None) -> str:

@@ -35,6 +35,7 @@ class SparkSubmitConfig:
     executor_memory: str
     redaction_regex: str
     timeout_seconds: int
+    auth_secret: str | None = None
 
     def job_path(self, job_filename: str) -> str:
         return f"{self.jobs_dir.rstrip('/')}/{job_filename}"
@@ -125,6 +126,7 @@ def get_spark_submit_config() -> SparkSubmitConfig:
         executor_memory=os.getenv("SPARK_EXECUTOR_MEMORY", "1g"),
         redaction_regex=os.getenv("SPARK_REDACTION_REGEX", DEFAULT_SPARK_REDACTION_REGEX),
         timeout_seconds=int(os.getenv("SPARK_SUBMIT_TIMEOUT_SECONDS", "900")),
+        auth_secret=(os.getenv("SPARK_AUTH_SECRET") or "").strip() or None,
     )
 
 
@@ -143,6 +145,11 @@ class SparkSubmitRunner:
             f"spark.driver.bindAddress={self.config.driver_bind_address}",
             "--conf",
             f"spark.redaction.regex={self.config.redaction_regex}",
+            *(
+                ["--conf", "spark.authenticate=true", "--conf", f"spark.authenticate.secret={self.config.auth_secret}"]
+                if self.config.auth_secret
+                else []
+            ),
             "--driver-memory",
             self.config.driver_memory,
             "--executor-memory",

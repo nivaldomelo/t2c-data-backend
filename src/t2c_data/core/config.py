@@ -2,6 +2,7 @@ from pathlib import Path
 
 from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy import URL
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -64,7 +65,10 @@ class OperationalIngestionDatabaseConfig(BaseSettings):
         port = int(self.port or 5432)
         if not host or not database or not user:
             return None
-        return f"postgresql+psycopg://{user}:{password}@{host}:{port}/{database}"
+        # URL.create escapa cada componente (evita injeção de URL/param via senha/host).
+        return URL.create(
+            "postgresql+psycopg", username=user, password=password, host=host, port=port, database=database
+        ).render_as_string(hide_password=False)
 
 
 class MetabaseIntegrationConfig(BaseSettings):
@@ -111,7 +115,9 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 120
     # Number of logins a user may perform WITHOUT enrolling MFA before being locked.
-    mfa_grace_logins: int = 3
+    # Kept at 1 (was 3) to minimize the window where a stolen password bypasses MFA:
+    # one grace login is enough to reach MFA enrollment. Override via MFA_GRACE_LOGINS.
+    mfa_grace_logins: int = 1
     # Passwords must be rotated within this many days; warn within the threshold.
     password_max_age_days: int = 90
     password_expiry_warning_days: int = 10
@@ -345,6 +351,11 @@ class Settings(BaseSettings):
                 raise ValueError("DATASOURCE_SECRET_KEY must be different from JWT_SECRET_KEY outside dev/test")
             if "change-me" in datasource_key.lower():
                 raise ValueError("DATASOURCE_SECRET_KEY must be a strong non-default value outside dev/test")
+            # Chave curta é força-bruta trivial contra blobs Fernet vazados (KDF SHA256).
+            if len(datasource_key) < 32:
+                raise ValueError("DATASOURCE_SECRET_KEY must be at least 32 characters outside dev/test")
+            if len(self.jwt_secret_key.strip()) < 32:
+                raise ValueError("JWT_SECRET_KEY must be at least 32 characters outside dev/test")
             if self.enable_db_seed:
                 raise ValueError("ENABLE_DB_SEED must be disabled outside dev/test")
             if bootstrap_admin_password == "admin123" or "change-me" in (bootstrap_admin_password or "").lower():

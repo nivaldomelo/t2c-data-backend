@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from t2c_data.core.config import OperationalIngestionDatabaseConfig, settings
 from t2c_data.core.db import get_db
 from t2c_data.core.deps import require_roles
+from t2c_data.core.ssrf import SsrfValidationError, assert_safe_connect_host
 from t2c_data.features.platform_settings.resolvers import (
     resolve_control_db_url,
     resolve_metabase_config,
@@ -162,6 +163,10 @@ def test_spark_connection(
     port = parsed.port or 7077
     if not host:
         return PlatformConfigTestResult(ok=False, target=master, detail="URL do master Spark inválida.")
+    try:
+        assert_safe_connect_host(host, label="host Spark")
+    except SsrfValidationError as exc:
+        return PlatformConfigTestResult(ok=False, target=f"{host}:{port}", detail=str(exc))
     started = monotonic()
     try:
         with socket.create_connection((host, port), timeout=4):
@@ -185,11 +190,15 @@ def test_metabase_connection(
     base = mb.normalized_base_url()
     if not base:
         return PlatformConfigTestResult(ok=False, target="metabase", detail="base_url do Metabase não configurada.")
+    try:
+        assert_safe_connect_host(urlparse(base).hostname or "", label="host Metabase")
+    except SsrfValidationError as exc:
+        return PlatformConfigTestResult(ok=False, target=base, detail=str(exc))
     started = monotonic()
     try:
         import httpx
 
-        with httpx.Client(timeout=mb.timeout_seconds or 10) as client:
+        with httpx.Client(timeout=mb.timeout_seconds or 10, follow_redirects=False) as client:
             resp = client.get(f"{base}/api/health")
         ok = resp.status_code == 200
         return PlatformConfigTestResult(
@@ -212,6 +221,10 @@ def test_control_db_connection(
         return PlatformConfigTestResult(ok=False, target="control-db", detail="Banco de controle não configurado.")
     parsed = urlparse(url.replace("postgresql+psycopg://", "postgresql://"))
     target = f"{parsed.hostname or '?'}/{(parsed.path or '').lstrip('/') or '?'}"
+    try:
+        assert_safe_connect_host(parsed.hostname or "", label="host do banco de controle")
+    except SsrfValidationError as exc:
+        return PlatformConfigTestResult(ok=False, target=target, detail=str(exc))
     started = monotonic()
     engine = None
     try:

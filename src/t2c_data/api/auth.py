@@ -12,7 +12,14 @@ from t2c_data.core.db import get_db
 from t2c_data.core.deps import oauth2_scheme
 from t2c_data.core.network import get_request_client_ip
 from t2c_data.core.secret_store import decrypt_secret_mapping
-from t2c_data.core.security import create_access_token, decode_token_payload, verify_password, verify_totp_code
+from t2c_data.core.security import (
+    create_access_token,
+    decode_token_payload,
+    find_totp_counter,
+    hash_password,
+    verify_password,
+    verify_totp_code,
+)
 from t2c_data.features.auth.password_policy import password_expiry_status
 from t2c_data.models.auth import Role, User
 from t2c_data.models.audit import AuditLog
@@ -48,6 +55,11 @@ def _check_login_rate_limit(db: Session, _request: Request, email: str) -> None:
         )
 
 
+# Hash dummy para equalizar o tempo de resposta quando o e-mail não existe (anti-enumeração
+# por timing): sem isso, contas inexistentes respondem mais rápido (Argon2 nunca é chamado).
+_DUMMY_PASSWORD_HASH = hash_password("timing-equalizer-not-a-real-password")
+
+
 @router.post("/login", response_model=LoginResponse)
 def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)) -> LoginResponse:
     normalized_email = payload.email.strip().lower()
@@ -57,7 +69,12 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
         .options(selectinload(User.roles).selectinload(Role.permissions))
         .where(func.lower(User.email) == normalized_email)
     )
-    if not user or not verify_password(payload.password, user.password_hash):
+    if user is not None:
+        password_ok = verify_password(payload.password, user.password_hash)
+    else:
+        verify_password(payload.password, _DUMMY_PASSWORD_HASH)  # queima o mesmo tempo do caminho válido
+        password_ok = False
+    if not password_ok:
         audit_kwargs = request_audit_kwargs(request)
         audit_kwargs.pop("user_email", None)
         write_audit_log_sync(
@@ -160,7 +177,10 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
             )
             db.commit()
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="MFA required")
-        if not verify_totp_code(mfa_secret, mfa_code):
+        matched_counter = find_totp_counter(mfa_secret, mfa_code)
+        last_counter = getattr(user, "mfa_last_counter", None)
+        replayed = matched_counter is not None and last_counter is not None and matched_counter <= last_counter
+        if matched_counter is None or replayed:
             audit_kwargs = request_audit_kwargs(request, user)
             audit_kwargs.pop("user_email", None)
             write_audit_log_sync(
@@ -169,12 +189,14 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
                 entity_type="auth",
                 entity_id=user.email,
                 user_email=user.email,
-                metadata={"email": user.email, "reason": "invalid_mfa_code"},
+                metadata={"email": user.email, "reason": "replayed_mfa_code" if replayed else "invalid_mfa_code"},
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 **audit_kwargs,
             )
             db.commit()
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid MFA code")
+        user.mfa_last_counter = matched_counter  # anti-replay: consome este contador
+        db.add(user)
     else:
         grace_limit = int(getattr(settings, "mfa_grace_logins", 3) or 0)
         used = int(getattr(user, "mfa_grace_logins_used", 0) or 0)

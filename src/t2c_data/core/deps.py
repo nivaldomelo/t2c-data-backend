@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.orm import Session
 
 from t2c_data.core.db import get_db
+from t2c_data.core.network import get_request_client_ip
 from t2c_data.core.security import decode_token, decode_token_payload
 from t2c_data.core.rbac import is_admin_role, user_role_names
 from t2c_data.features.platform.alerting import emit_permission_denied_alert
@@ -141,9 +142,11 @@ def enforce_role_scope_for_request(current_user: User, method: str, path: str) -
             return
 
     if "stewardship" in roles or "data_owner" in roles:
-        # Both roles read everything except the admin area (mirroring the viewer's
-        # read access but broader). Each gets exactly one narrow write surface.
-        if normalized_path.startswith("/admin"):
+        # Both roles read everything except the admin area and datasources (datasource
+        # connection metadata is admin-only). Defense-in-depth: agrees with the permission
+        # layer (datasource:read é admin-only), evitando vazamento se uma rota GET nova
+        # sob /datasources for adicionada sem require_permission.
+        if normalized_path.startswith("/admin") or normalized_path.startswith("/datasources"):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient role scope")
         if http_method == "GET":
             return

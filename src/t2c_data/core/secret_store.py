@@ -94,6 +94,7 @@ def decrypt_secret_mapping(raw: str | None) -> dict[str, str]:
     try:
         decrypted = _FERNET.decrypt(token)
     except InvalidToken:
+        logger.warning("secret mapping failed to decrypt (InvalidToken) — key rotation/tampering? returning empty")
         return {}
     try:
         payload = json.loads(decrypted.decode("utf-8"))
@@ -125,4 +126,5 @@ def decrypt_text(raw: str | None) -> str | None:
     try:
         return _FERNET.decrypt(token).decode("utf-8")
     except InvalidToken:
+        logger.warning("encrypted text failed to decrypt (InvalidToken) — key rotation/tampering? returning None")
         return None

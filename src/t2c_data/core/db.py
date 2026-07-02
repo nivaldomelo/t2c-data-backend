@@ -30,12 +30,14 @@ def _warn_if_insecure_transport(url) -> None:
         return
     message = (
         "DATABASE_URL points to a remote host (%s) without sslmode=require/verify-ca/verify-full; "
-        "the connection may be UNENCRYPTED. Set sslmode in production."
+        "the connection may be UNENCRYPTED. Set sslmode (e.g. ?sslmode=require) in production."
     )
     if is_dev_environment(settings.env):
         logger.warning(message, host)
     else:
+        # Fail-secure outside dev: refuse to connect in cleartext to a remote DB.
         logger.error(message, host)
+        raise RuntimeError(message % host)
 
 
 engine_kwargs = {
