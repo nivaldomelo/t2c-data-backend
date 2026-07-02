@@ -139,7 +139,7 @@ jobs:
         env:
           ENVIRONMENT: ${{ needs.init.outputs.environment }}
         run: |
-          umask 077; cat > "$RUNNER_TEMP/secret-values.yaml" <<EOF
+          umask 077; cat > ../secret-values.yaml <<EOF
           secrets:
             DATABASE_URL: "${{ secrets.DATABASE_URL }}"
             JWT_SECRET_KEY: "${{ secrets.JWT_SECRET_KEY }}"
@@ -159,7 +159,7 @@ jobs:
           REGISTRY="$AWS_ACCOUNT_ID.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com"
           helm upgrade --install "$APP_NAME" .helm \
             -n "${ENVIRONMENT}-app" --create-namespace \
-            -f "$RUNNER_TEMP/secret-values.yaml" \
+            -f ../secret-values.yaml \
             --set appName="$APP_NAME" \
             --set domain="$DNS_DOMAIN" \
             --set ingressEnvironment="$ENVIRONMENT" \
