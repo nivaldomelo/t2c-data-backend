@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any
 
+from sqlalchemy import URL
 from sqlalchemy.orm import Session
 
 from t2c_data.core.config import MetabaseIntegrationConfig, OperationalIngestionDatabaseConfig, settings
@@ -104,8 +105,17 @@ def resolve_control_db_url(session: Session | None = None) -> str | None:
 
     password = _clean(d.get("control_db_password")) or ""
     port = int(d.get("control_db_port") or 5432)
-    url = f"postgresql+psycopg://{user}:{password}@{host}:{port}/{name}"
     sslmode = _clean(d.get("control_db_sslmode"))
-    if sslmode:
-        url += f"?sslmode={sslmode}"
-    return url
+    # Fail-secure: host remoto sem sslmode explícito assume require (evita conexão em claro).
+    if not sslmode and host.lower() not in {"localhost", "127.0.0.1", "::1", "host.docker.internal"}:
+        sslmode = "require"
+    # URL.create escapa cada componente (evita injeção de URL/param-libpq via senha/host/name).
+    return URL.create(
+        "postgresql+psycopg",
+        username=user,
+        password=password,
+        host=host,
+        port=port,
+        database=name,
+        query={"sslmode": sslmode} if sslmode else {},
+    ).render_as_string(hide_password=False)

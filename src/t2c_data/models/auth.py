@@ -49,6 +49,8 @@ class User(TimestampMixin, Base):
     mfa_grace_logins_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     mfa_locked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     mfa_locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Último contador TOTP aceito (anti-replay): rejeita código cujo contador <= este.
+    mfa_last_counter: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # When the password was last set; access is blocked once it is older than the
     # configured max age (default 90 days) until rotated or released by an admin.
     password_changed_at: Mapped[datetime] = mapped_column(

@@ -15,7 +15,11 @@ from t2c_data.features.integrations.data_lake_schedules import (
     update_data_lake_scan_schedule_run_state,
 )
 from t2c_data.features.export_jobs import process_export_job
-from t2c_data.features.platform.jobs import claim_queued_integration_job, finish_integration_job_record
+from t2c_data.features.platform.jobs import (
+    claim_queued_integration_job,
+    finish_integration_job_record,
+    reclaim_stalled_running_jobs,
+)
 from t2c_data.features.platform.scheduler import process_platform_maintenance_job
 from t2c_data.features.platform.worker_health import (
     WorkerHeartbeatContext,
@@ -371,7 +375,16 @@ def process_next_integration_job(
         try:
             processed = process_claimed_integration_job(session, job)
         except Exception:
-            heartbeat_worker(session, context, status="degraded", active_job=job)
+            # A conexão pode ter caído no meio do job (RDS idle/SSL EOF). Faz rollback
+            # ANTES do heartbeat para não estourar PendingRollbackError numa transação abortada.
+            try:
+                session.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                heartbeat_worker(session, context, status="degraded", active_job=job)
+            except Exception:  # noqa: BLE001
+                logger.warning("heartbeat após falha do job não pôde ser registrado", exc_info=True)
             raise
         heartbeat_worker(
             session,
@@ -402,15 +415,34 @@ def run_integration_worker_forever(
         job_type,
         interval,
     )
+    idle_cycles = 0
     while True:
-        job = process_next_integration_job(
-            source=source,
-            job_type=job_type,
-            session_factory=session_factory,
-            worker_context=worker_context,
-        )
+        try:
+            job = process_next_integration_job(
+                source=source,
+                job_type=job_type,
+                session_factory=session_factory,
+                worker_context=worker_context,
+            )
+        except Exception:  # noqa: BLE001 - nunca deixe uma queda transitória (ex.: DB/SSL EOF) matar o worker
+            logger.exception(
+                "integration_worker_iteration_failed source=%s job_type=%s; retomando após pausa",
+                source,
+                job_type,
+            )
+            job = None
         if job is None:
+            idle_cycles += 1
+            # Auto-cura: periodicamente recupera jobs presos em 'running' (crash/queda de conexão).
+            if idle_cycles % 30 == 0:
+                try:
+                    with session_factory() as session:
+                        reclaim_stalled_running_jobs(session, source=source, job_type=job_type)
+                except Exception:  # noqa: BLE001
+                    logger.exception("reclaim_stalled_running_jobs falhou; seguindo")
             sleep(interval)
+        else:
+            idle_cycles = 0
 
 
 def run_platform_maintenance_worker_forever(
@@ -425,12 +457,16 @@ def run_platform_maintenance_worker_forever(
         interval,
     )
     while True:
-        job = process_next_integration_job(
-            source="platform",
-            job_type="maintenance",
-            session_factory=session_factory,
-            worker_context=worker_context,
-        )
+        try:
+            job = process_next_integration_job(
+                source="platform",
+                job_type="maintenance",
+                session_factory=session_factory,
+                worker_context=worker_context,
+            )
+        except Exception:  # noqa: BLE001 - resiliência a quedas transitórias de conexão
+            logger.exception("platform_maintenance_worker_iteration_failed; retomando após pausa")
+            job = None
         if job is None:
             sleep(interval)
 

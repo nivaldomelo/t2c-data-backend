@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from typing import Any, Protocol
-from urllib.parse import quote_plus
+
+from sqlalchemy import URL
 
 from t2c_data.connectors.base import ConnectorError
 from t2c_data.features.scanner.mongodb import scan_mongodb
@@ -58,11 +59,15 @@ class DefaultMetadataScanGateway:
                 password = datasource.get_secret("password") or datasource.password
                 if not password:
                     raise ConnectorError("Senha não configurada para o datasource.", code="invalid_config")
-                connection_uri = (
-                    "postgresql://"
-                    f"{quote_plus(str(connection['username']))}:{quote_plus(password)}"
-                    f"@{connection['host']}:{connection['port']}/{quote_plus(str(connection['database']))}"
-                )
+                # URL.create escapa cada componente (host/port/user/db) — evita injeção de URI.
+                connection_uri = URL.create(
+                    "postgresql",
+                    username=str(connection["username"]),
+                    password=password,
+                    host=str(connection["host"]),
+                    port=int(connection["port"]) if str(connection.get("port") or "").strip() else None,
+                    database=str(connection["database"]),
+                ).render_as_string(hide_password=False)
             return scan_postgres(
                 connection_uri=connection_uri,
                 include_schemas=datasource.include_schemas or [],

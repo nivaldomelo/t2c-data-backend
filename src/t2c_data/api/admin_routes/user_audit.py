@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from t2c_data.core.db import get_db
 from t2c_data.core.deps import require_permission
 from t2c_data.core.network import get_request_client_ip
+from t2c_data.features.export_security import safe_csv_writer
 from t2c_data.models.audit import AccessLog, AuditLog
 from t2c_data.models.auth import User, UserAccessEvent, UserSession
 from t2c_data.schemas.pagination import PageOut
@@ -720,7 +721,7 @@ def user_audit_export_csv(
     rows = rows[:export_limit]
 
     output = io.StringIO()
-    writer = csv.writer(output)
+    writer = safe_csv_writer(output)
     writer.writerow([
         "created_at",
         "user_name",

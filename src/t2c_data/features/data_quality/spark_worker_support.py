@@ -136,11 +136,23 @@ def write_job_logs(job_run_id: int, *, job_type: str, stdout_log: str, stderr_lo
     return write_results_text(results_dir, f"{job_type}-run-{job_run_id}.log", body)
 
 
+_JDBC_HOSTNAME_RE = re.compile(r"\A[A-Za-z0-9._-]+\Z")
+_JDBC_DBNAME_RE = re.compile(r"\A[A-Za-z0-9._$-]+\Z")
+
+
 def jdbc_config_for_datasource(datasource: DataSource) -> dict[str, str]:
     if datasource.db_type != "postgres":
         raise ValueError("Spark DQ MVP currently supports only Postgres datasources")
+    # Anti-injeção de parâmetros JDBC: host/database entram cru na URL do driver → validar charset.
+    host = str(datasource.host or "")
+    database = str(datasource.database or "")
+    if not _JDBC_HOSTNAME_RE.match(host):
+        raise ValueError("Host do datasource inválido para JDBC.")
+    if not _JDBC_DBNAME_RE.match(database):
+        raise ValueError("Nome do banco do datasource inválido para JDBC.")
+    port = int(datasource.port or 5432)
     return {
-        "url": f"jdbc:postgresql://{datasource.host}:{datasource.port}/{datasource.database}",
+        "url": f"jdbc:postgresql://{host}:{port}/{database}",
         "user": datasource.username,
         "password": datasource.password,
     }

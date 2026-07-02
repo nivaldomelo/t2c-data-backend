@@ -15,6 +15,8 @@ from urllib.parse import urlparse
 
 _AWS_REGION_RE = re.compile(r"^[a-z]{2}-[a-z]+-\d$")
 _ALLOWED_SCHEMES = {"http", "https"}
+# Endereços de metadata de nuvem que NÃO são pegos por is_link_local (ex.: IMDS IPv6 unique-local).
+_METADATA_IPS = frozenset({ipaddress.ip_address("fd00:ec2::254")})
 
 
 class SsrfValidationError(ValueError):
@@ -64,6 +66,33 @@ def validate_public_http_url(url: str, *, label: str = "URL", allow_private: boo
     return raw
 
 
+def assert_safe_connect_host(host: str, *, label: str = "host") -> None:
+    """Guard for ADMIN-configured infra targets (Spark master / control-DB / Metabase test).
+
+    Blocks loopback, link-local (incl. cloud metadata 169.254.169.254 / fd00:ec2::254),
+    unspecified, multicast and reserved addresses — but ALLOWS private/RFC1918, because
+    internal services (RDS/Spark/Metabase inside the VPC) are legitimate targets here.
+    Best-effort (DNS rebinding possible); pair with follow_redirects=False on HTTP probes."""
+    raw = (host or "").strip()
+    if not raw:
+        raise SsrfValidationError(f"{label} ausente.")
+    try:
+        infos = socket.getaddrinfo(raw, None, proto=socket.IPPROTO_TCP)
+    except socket.gaierror as exc:
+        raise SsrfValidationError(f"{label} não resolvível.") from exc
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            raise SsrfValidationError(f"{label} inválido.")
+        # fd00:ec2::254 (IMDS IPv6) é unique-local (classificado como "private"), então precisa
+        # de deny explícito além dos checks abaixo.
+        if ip in _METADATA_IPS or ip.is_loopback or ip.is_link_local or ip.is_unspecified or ip.is_multicast or ip.is_reserved:
+            raise SsrfValidationError(
+                f"{label} aponta para endereço interno não permitido (loopback/link-local/metadata)."
+            )
+
+
 def validate_aws_region(region: str, *, label: str = "region") -> str:
     """Validate an AWS region token (e.g. ``us-east-1``) so it cannot be abused to alter the
     host of S3/STS endpoint URLs."""
@@ -73,4 +102,4 @@ def validate_aws_region(region: str, *, label: str = "region") -> str:
     return raw
 
 
-__all__ = ["SsrfValidationError", "validate_public_http_url", "validate_aws_region"]
+__all__ = ["SsrfValidationError", "assert_safe_connect_host", "validate_public_http_url", "validate_aws_region"]

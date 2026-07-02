@@ -141,9 +141,11 @@ def enforce_role_scope_for_request(current_user: User, method: str, path: str) -
             return
 
     if "stewardship" in roles or "data_owner" in roles:
-        # Both roles read everything except the admin area (mirroring the viewer's
-        # read access but broader). Each gets exactly one narrow write surface.
-        if normalized_path.startswith("/admin"):
+        # Both roles read everything except the admin area and datasources (datasource
+        # connection metadata is admin-only). Defense-in-depth: agrees with the permission
+        # layer (datasource:read é admin-only), evitando vazamento se uma rota GET nova
+        # sob /datasources for adicionada sem require_permission.
+        if normalized_path.startswith("/admin") or normalized_path.startswith("/datasources"):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient role scope")
         if http_method == "GET":
             return
@@ -269,15 +271,14 @@ def require_permission(permission_name: str):
                 write_audit_log_sync(
                     db,
                     action="platform.permission.denied",
-                    user_id=current_user.id,
-                    user_email=current_user.email,
-                    ip=get_request_client_ip(request),
-                    user_agent=request.headers.get("user-agent"),
                     entity_type="permission",
                     entity_id=permission_name,
                     field_name=permission_name,
                     source_module="platform",
                     metadata={"permission_name": permission_name, "path": request.url.path, "method": request.method},
+                    # request_audit_kwargs já provê user_id/user_email/ip/user_agent —
+                    # passá-los também gerava TypeError (duplicate keyword) engolido pelo except,
+                    # deixando o audit/alerta de permissão negada SEM efeito.
                     **request_audit_kwargs(request, current_user),
                 )
                 emit_permission_denied_alert(db, request=request, current_user=current_user, permission_name=permission_name)

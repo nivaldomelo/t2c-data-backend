@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from t2c_data.core.db import get_db
 from t2c_data.core.deps import require_permission, require_roles
-from t2c_data.features.export_security import DEFAULT_EXPORT_LIMIT, audit_export_event, resolve_export_limit
+from t2c_data.features.export_security import safe_csv_writer, safe_sheet_append, DEFAULT_EXPORT_LIMIT, audit_export_event, resolve_export_limit
 from t2c_data.features.dashboard.executive_queries import (
     get_dashboard_executive_asset_details,
     get_dashboard_executive_campaign_queue,
@@ -109,7 +109,7 @@ def dashboard_executive_secondary(
 
 # NOTE: the granular executive endpoints (top-critical, certification, governance-gaps,
 # dq, incidents, risk-by-domain) were removed — the frontend reads all of this from
-# /executive/secondary. The underlying service functions remain in app.features.dashboard
+# /executive/secondary. The underlying service functions remain in t2c_data.features.dashboard
 # for reuse/tests.
 
 
@@ -167,7 +167,7 @@ def dashboard_executive_campaign_export_csv(
         filters={"campaign_key": campaign_key, **dict(filters or {})},
     )
     buffer = StringIO()
-    writer = csv.writer(buffer)
+    writer = safe_csv_writer(buffer)
     writer.writerow(
         [
             "tabela",
@@ -240,7 +240,7 @@ def dashboard_executive_campaign_export_xlsx(
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Campanha"
-    sheet.append(
+    safe_sheet_append(sheet, 
         [
             "Tabela",
             "Fonte",
@@ -258,7 +258,7 @@ def dashboard_executive_campaign_export_xlsx(
         ]
     )
     for item in payload["items"]:
-        sheet.append(
+        safe_sheet_append(sheet, 
             [
                 item["table_fqn"],
                 item["datasource_name"],

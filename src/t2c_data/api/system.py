@@ -45,7 +45,15 @@ def readiness(response: Response, db: Session = Depends(get_db)) -> dict[str, ob
     payload = _build_readiness_payload(db, detailed=False)
     if response is not None and payload["status"] != "ready":
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-    return payload
+    # Unauthenticated endpoint: expose ONLY liveness-of-readiness, never internal detail
+    # (env, versão de migração, missing_tables, scheduler_modes). Detalhe fica no /ready/detailed (admin).
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    return {
+        "status": payload.get("status"),
+        "timestamp": payload.get("timestamp"),
+        "duration_ms": payload.get("duration_ms"),
+        "checks_total": summary.get("checks_total") if isinstance(summary, dict) else None,
+    }
 
 
 @router.get("/ready/detailed")

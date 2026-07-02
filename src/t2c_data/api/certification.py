@@ -16,7 +16,7 @@ from t2c_data.core.db import get_db
 from t2c_data.core.deps import require_permission, require_roles
 from t2c_data.features.access_control.abac import record_abac_denial
 from t2c_data.features.export_jobs import ExportArtifactResult, enqueue_export_job, register_export_request_audit, serialize_export_job
-from t2c_data.features.export_security import DEFAULT_EXPORT_LIMIT, audit_export_event, enforce_export_limit, redact_export_value, resolve_export_limit
+from t2c_data.features.export_security import safe_csv_writer, DEFAULT_EXPORT_LIMIT, audit_export_event, enforce_export_limit, redact_export_value, resolve_export_limit
 from t2c_data.features.audit import certification_changes
 from t2c_data.features.certification.api_support import (
     build_certification_summary_out,
@@ -168,7 +168,7 @@ def build_certification_queue_export_artifact(
     export_limit = resolve_export_limit(source_module="certification", entity_type="certification_queue")
     summaries, truncated = enforce_export_limit(summaries, limit=export_limit)
     buffer = StringIO()
-    writer = csv.writer(buffer)
+    writer = safe_csv_writer(buffer)
     writer.writerow(
         [
             "banco",
@@ -255,7 +255,7 @@ def build_certification_events_export_artifact(
         page_size=export_limit,
     )
     buffer = StringIO()
-    writer = csv.writer(buffer)
+    writer = safe_csv_writer(buffer)
     writer.writerow(
         [
             "data",
@@ -1515,7 +1515,7 @@ def export_certification_csv(
         },
     )
     buffer = StringIO()
-    writer = csv.writer(buffer)
+    writer = safe_csv_writer(buffer)
     writer.writerow(
         [
             "banco",
@@ -1685,7 +1685,7 @@ def export_certification_events_csv(
         },
     )
     buffer = StringIO()
-    writer = csv.writer(buffer)
+    writer = safe_csv_writer(buffer)
     writer.writerow(
         [
             "data",

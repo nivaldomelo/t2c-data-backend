@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import re
 from datetime import datetime, timezone
 from typing import Any
@@ -796,6 +797,23 @@ def main() -> None:
 
     where_clause = _delta_where_clause(args)
 
+    # Particionamento JDBC: no modo delta a coluna de watermark + a janela (window_start/end)
+    # são bounds naturais → paraleliza a leitura em N faixas (evita 1 executor segurar tudo).
+    num_partitions = int(os.getenv("SPARK_JDBC_NUM_PARTITIONS", "4") or "4")
+    fetchsize = int(os.getenv("SPARK_JDBC_FETCHSIZE", "10000") or "10000")
+    partition_kwargs: dict[str, Any] = {}
+    if (
+        (getattr(args, "profiling_mode", "full") or "full") == "delta"
+        and (getattr(args, "watermark_column", None) or "").strip()
+        and (getattr(args, "window_start", None) or "").strip()
+    ):
+        partition_kwargs = {
+            "partition_column": args.watermark_column.strip(),
+            "lower_bound": args.window_start.strip(),
+            "upper_bound": (args.window_end or args.window_start).strip(),
+            "num_partitions": num_partitions,
+        }
+
     spark = build_spark("t2c-dq-profiling")
     df: DataFrame | None = None
     try:
@@ -806,6 +824,8 @@ def main() -> None:
             connection["jdbc_password"],
             args.table_fqn,
             where_clause=where_clause,
+            fetchsize=fetchsize,
+            **partition_kwargs,
         )
         if args.sample_fraction:
             df = df.sample(withReplacement=False, fraction=args.sample_fraction, seed=42)

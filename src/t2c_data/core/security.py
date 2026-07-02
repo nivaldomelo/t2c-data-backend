@@ -101,6 +101,33 @@ def _hotp_code(secret: str, counter: int, *, digits: int = 6) -> str:
     return str(code_int % (10**digits)).zfill(digits)
 
 
+def find_totp_counter(
+    secret: str,
+    code: str,
+    *,
+    for_time: datetime | None = None,
+    period: int = 30,
+    digits: int = 6,
+    window: int = 1,
+) -> int | None:
+    """Return the absolute HOTP counter that matches ``code`` (for anti-replay tracking), or None.
+
+    Callers should persist the returned counter and reject any future code whose counter is
+    ``<=`` the last accepted one, so a captured code cannot be replayed within its window."""
+    normalized_code = re.sub(r"\s+", "", (code or "").strip())
+    if not normalized_code.isdigit() or len(normalized_code) != digits:
+        return None
+    try:
+        counter = _totp_counter(for_time, period=period)
+    except Exception:  # noqa: BLE001
+        return None
+    for offset in range(-window, window + 1):
+        candidate = _hotp_code(secret, counter + offset, digits=digits)
+        if hmac.compare_digest(candidate, normalized_code):
+            return counter + offset
+    return None
+
+
 def verify_totp_code(
     secret: str,
     code: str,
@@ -110,18 +137,7 @@ def verify_totp_code(
     digits: int = 6,
     window: int = 1,
 ) -> bool:
-    normalized_code = re.sub(r"\s+", "", (code or "").strip())
-    if not normalized_code.isdigit() or len(normalized_code) != digits:
-        return False
-    try:
-        counter = _totp_counter(for_time, period=period)
-    except Exception:  # noqa: BLE001
-        return False
-    for offset in range(-window, window + 1):
-        candidate = _hotp_code(secret, counter + offset, digits=digits)
-        if hmac.compare_digest(candidate, normalized_code):
-            return True
-    return False
+    return find_totp_counter(secret, code, for_time=for_time, period=period, digits=digits, window=window) is not None
 
 
 def generate_totp_code(

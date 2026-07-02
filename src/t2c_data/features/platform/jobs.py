@@ -315,6 +315,38 @@ def enqueue_integration_job(
     return job
 
 
+def reclaim_stalled_running_jobs(
+    session: Session,
+    *,
+    source: str | None = None,
+    job_type: str | None = None,
+) -> int:
+    """Auto-cura da fila: marca como 'failed' jobs presos em 'running' que já estão stalled
+    (worker morto/queda de conexão antes de finalizar). Sem isso, o job_key fica bloqueado
+    indefinidamente (enqueue de novo job levanta 409). Retorna quantos foram recuperados."""
+    if not _job_table_ready(session):
+        return 0
+    stmt = select(IntegrationSyncJob).where(IntegrationSyncJob.status == "running")
+    if source:
+        stmt = stmt.where(IntegrationSyncJob.source == _normalize_token(source))
+    if job_type:
+        stmt = stmt.where(IntegrationSyncJob.job_type == _normalize_token(job_type))
+    reclaimed = 0
+    for job in session.scalars(stmt).all():
+        if not _is_stalled_integration_job(session, job):
+            continue
+        job.status = "failed"
+        job.finished_at = _now()
+        job.error = "reclaimed: stalled running job (worker crash/connection drop)"
+        job.progress_pct = 100.0
+        session.add(job)
+        reclaimed += 1
+        logger.warning("integration_job_reclaimed job_id=%s source=%s job_type=%s", job.id, job.source, job.job_type)
+    if reclaimed:
+        session.commit()
+    return reclaimed
+
+
 def claim_queued_integration_job(
     session: Session,
     *,

@@ -15,7 +15,7 @@ from t2c_data.core.config import settings
 from t2c_data.core.db import get_db
 from t2c_data.core.deps import require_permission, require_roles
 from t2c_data.features.export_jobs import ExportArtifactResult, enqueue_export_job, register_export_request_audit, serialize_export_job
-from t2c_data.features.export_security import DEFAULT_EXPORT_LIMIT, audit_export_event, enforce_export_limit, redact_export_value, resolve_export_limit
+from t2c_data.features.export_security import safe_csv_writer, safe_sheet_append, DEFAULT_EXPORT_LIMIT, audit_export_event, enforce_export_limit, redact_export_value, resolve_export_limit
 from t2c_data.features.governance import get_or_create_governance_settings
 from t2c_data.features.governance.score_config import normalize_governance_policy_rules, normalize_governance_score_weights
 from t2c_data.features.governance.settings import get_governance_settings_snapshot
@@ -372,7 +372,7 @@ def build_access_log_archive_csv_export_artifact(
     rows = _access_log_archive_rows(db, module_name=module_name, api_version=api_version, days=days)
     rows, truncated = enforce_export_limit(rows, limit=export_limit)
     buffer = StringIO()
-    writer = csv.writer(buffer)
+    writer = safe_csv_writer(buffer)
     writer.writerow(["created_at", "user_email", "actor_name", "api_version", "module_name", "route", "method", "status_code", "duration_ms", "request_id"])
     for row in rows:
         writer.writerow([
@@ -414,9 +414,9 @@ def build_access_log_archive_xlsx_export_artifact(
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Access Log Archive"
-    sheet.append(["created_at", "user_email", "actor_name", "api_version", "module_name", "route", "method", "status_code", "duration_ms", "request_id"])
+    safe_sheet_append(sheet, ["created_at", "user_email", "actor_name", "api_version", "module_name", "route", "method", "status_code", "duration_ms", "request_id"])
     for row in rows:
-        sheet.append([
+        safe_sheet_append(sheet, [
             row.created_at.isoformat(),
             redact_export_value(row.user_email, field_name="user_email"),
             row.actor_name or "",
@@ -473,7 +473,7 @@ def build_audit_log_archive_csv_export_artifact(
     rows = _audit_log_archive_rows(db, entity_type=entity_type, change_type=change_type, source_module=source_module, days=days)
     rows, truncated = enforce_export_limit(rows, limit=export_limit)
     buffer = StringIO()
-    writer = csv.writer(buffer)
+    writer = safe_csv_writer(buffer)
     writer.writerow(["created_at", "actor_name", "user_email", "entity_type", "entity_id", "field_name", "change_type", "source_module", "is_sensitive_change", "before", "after"])
     for row in rows:
         writer.writerow([
@@ -517,9 +517,9 @@ def build_audit_log_archive_xlsx_export_artifact(
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Audit Log Archive"
-    sheet.append(["created_at", "actor_name", "user_email", "entity_type", "entity_id", "field_name", "change_type", "source_module", "is_sensitive_change", "before", "after"])
+    safe_sheet_append(sheet, ["created_at", "actor_name", "user_email", "entity_type", "entity_id", "field_name", "change_type", "source_module", "is_sensitive_change", "before", "after"])
     for row in rows:
-        sheet.append([
+        safe_sheet_append(sheet, [
             row.created_at.isoformat(),
             row.actor_name or "",
             redact_export_value(row.user_email, field_name="user_email"),

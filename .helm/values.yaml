@@ -14,9 +14,12 @@ service:
 
 api:
   replicas: 2
+  # Triggers MANUAIS de DQ (profiling/rules) disparam o driver do spark-submit (client-mode, 2g)
+  # em thread daemon DENTRO do pod da API. O limit acomoda 1 driver de 2g + FastAPI + overhead.
+  # Profiling agendado NÃO roda aqui (mode=worker → pulado na API); vai para o dq-worker.
   resources:
-    requests: { cpu: 250m, memory: 512Mi }
-    limits: { cpu: "1", memory: 1Gi }
+    requests: { cpu: 250m, memory: 768Mi }
+    limits: { cpu: "1", memory: 3Gi }
   hpa:
     enabled: true
     minReplicas: 2
@@ -27,10 +30,19 @@ api:
 workers:
   - name: scan-worker
     command: ["python", "scripts/run_platform_job_worker.py", "--source", "datasource", "--job-type", "scan", "--poll-interval", "2"]
-    resources: { requests: { cpu: 250m, memory: 512Mi }, limits: { cpu: "1", memory: 1Gi } }
+    # Hospeda o DRIVER do spark-submit (client-mode, SPARK_DRIVER_MEMORY=2g). Processa 1 job
+    # por vez → 1 driver por vez; limit dá folga p/ 2g de heap + Python. Escala MÉDIA.
+    resources: { requests: { cpu: 500m, memory: 1Gi }, limits: { cpu: "2", memory: 3Gi } }
   - name: metabase-worker
     command: ["python", "scripts/run_metabase_worker.py"]
     resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { cpu: 500m, memory: 512Mi } }
+  - name: dq-worker
+    command: ["python", "scripts/run_dq_worker.py"]
+    # Executa os ciclos de scheduler de DQ (profiling + rules) em produção (mode=worker). Cada
+    # profiling/rule despachado roda o DRIVER do spark-submit (2g) em thread NESTE pod. Escala
+    # MÉDIA: cluster permite ~3 jobs simultâneos (spark.cores.max=4 sobre 12 cores) → limit
+    # comporta ~3 drivers de 2g + overhead. Mantenha schema_concurrency ≤ 3 para não exceder.
+    resources: { requests: { cpu: 500m, memory: 1Gi }, limits: { cpu: "2", memory: 8Gi } }
 
 # Migração Alembic — hook pre-upgrade (não roda nos pods da API).
 migrate:
@@ -53,6 +65,17 @@ config:
   PLATFORM_AUTOMATION_RULES_ENABLED: "false"
   LOG_JSON: "true"
   DB_SCHEMA: t2c_data
+  # Recursos do spark-submit (client-mode) — escala MÉDIA. Casam com o cluster t2c-data-spark
+  # (3 workers × 4c/8G): executor 4g/2 cores, teto 4 cores/job (~3 jobs simultâneos). Driver no pod.
+  SPARK_DRIVER_MEMORY: "2g"
+  SPARK_EXECUTOR_MEMORY: "4g"
+  SPARK_EXECUTOR_CORES: "2"
+  SPARK_CORES_MAX: "4"
+  SPARK_SUBMIT_TIMEOUT_SECONDS: "1800"   # tabelas grandes no 1º profiling (full)
+  # Leitura JDBC particionada (dq_profiling_job): paraleliza em N faixas da coluna de watermark
+  # (modo delta) e faz streaming de linhas via fetchsize — evita 1 executor segurar a tabela toda.
+  SPARK_JDBC_NUM_PARTITIONS: "4"
+  SPARK_JDBC_FETCHSIZE: "10000"
 
 # Secret — chaves vazias aqui; valores entram via secret-values.yaml gerado em runtime no deploy.
 # (NUNCA versionar valores reais.)
@@ -63,3 +86,4 @@ secrets:
   AWS_ACCESS_KEY_ID: ""
   AWS_SECRET_ACCESS_KEY: ""
   AWS_REGION: ""
+  SPARK_AUTH_SECRET: ""      # só se o cluster Spark estiver com spark.authEnabled=true (mesmo valor)

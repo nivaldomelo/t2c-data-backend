@@ -35,6 +35,7 @@ COPY jars ./jars
 COPY spark-jobs /opt/spark/jobs
 
 RUN pip install . \
+    && apt-get purge -y --auto-remove build-essential \
     && chown -R appuser:appuser /app /opt/spark/jobs
 
 EXPOSE 8000
