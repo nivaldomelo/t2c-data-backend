@@ -6,7 +6,7 @@ from io import BytesIO
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from t2c_data.features.export_security import DEFAULT_EXPORT_LIMIT, enforce_export_limit, redact_export_value
+from t2c_data.features.export_security import DEFAULT_EXPORT_LIMIT, enforce_export_limit, redact_export_value, safe_sheet_append
 from t2c_data.features.lineage.spreadsheet_parser_support import (
     LINEAGE_ASSET_HEADERS,
     LINEAGE_IMPORT_HEADERS,
@@ -76,7 +76,8 @@ def build_lineage_workbook(session: Session, *, limit: int = DEFAULT_EXPORT_LIMI
         external_sources = [relation.source_asset for relation in incoming if relation.source_asset.asset_type == "source"]
         dashboards = [relation.target_asset.asset_name for relation in outgoing if relation.target_asset.asset_type in {"dashboard", "question"}]
         relation_with_process = next((relation for relation in [*incoming, *outgoing] if relation.process_name), None)
-        mapping_sheet.append(
+        safe_sheet_append(
+            mapping_sheet,
             [
                 asset.layer,
                 asset.asset_type,

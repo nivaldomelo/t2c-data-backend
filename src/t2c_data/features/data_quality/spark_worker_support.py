@@ -136,8 +136,8 @@ def write_job_logs(job_run_id: int, *, job_type: str, stdout_log: str, stderr_lo
     return write_results_text(results_dir, f"{job_type}-run-{job_run_id}.log", body)
 
 
-_JDBC_HOSTNAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
-_JDBC_DBNAME_RE = re.compile(r"^[A-Za-z0-9._$-]+$")
+_JDBC_HOSTNAME_RE = re.compile(r"\A[A-Za-z0-9._-]+\Z")
+_JDBC_DBNAME_RE = re.compile(r"\A[A-Za-z0-9._$-]+\Z")
 
 
 def jdbc_config_for_datasource(datasource: DataSource) -> dict[str, str]:
