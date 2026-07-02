@@ -158,6 +158,12 @@ def read_table_via_jdbc(
     password: str,
     table_fqn: str,
     where_clause: str | None = None,
+    *,
+    partition_column: str | None = None,
+    lower_bound: str | None = None,
+    upper_bound: str | None = None,
+    num_partitions: int | None = None,
+    fetchsize: int = 10000,
 ) -> DataFrame:
     if F is None:
         raise RuntimeError("pyspark is required to read tables via JDBC.")
@@ -166,15 +172,26 @@ def read_table_via_jdbc(
     dbtable = table_fqn
     if where_clause:
         dbtable = f"(SELECT * FROM {table_fqn} WHERE {where_clause}) AS t2c_src"
-    return (
+    reader = (
         spark.read.format("jdbc")
         .option("url", jdbc_url)
         .option("user", user)
         .option("password", password)
         .option("dbtable", dbtable)
         .option("driver", "org.postgresql.Driver")
-        .load()
+        .option("fetchsize", str(fetchsize))  # streaming de linhas, não tudo de uma vez
     )
+    # Particionamento: paraleliza a leitura em N faixas de partition_column, evitando 1 executor
+    # segurar a tabela inteira (OOM). Requer coluna numérica/data/timestamp + bounds; no profiling
+    # delta usamos a coluna de watermark + a janela como bounds.
+    if partition_column and lower_bound is not None and upper_bound is not None and num_partitions and int(num_partitions) > 1:
+        reader = (
+            reader.option("partitionColumn", partition_column)
+            .option("lowerBound", str(lower_bound))
+            .option("upperBound", str(upper_bound))
+            .option("numPartitions", str(int(num_partitions)))
+        )
+    return reader.load()
 
 
 def write_json_output(path: str, payload: dict) -> None:
